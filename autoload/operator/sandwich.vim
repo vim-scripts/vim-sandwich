@@ -1,7 +1,7 @@
 " operator-sandwich: wrap by buns!
-" TODO: add 'at' option
-" TODO: add a way to use user defined filter
-" TODO: add a filter for addition or deletion
+" TODO: Add 'at' option
+" TODO: Give API to get information from operator object.
+"       It would be helpful for users in use of 'expr_filter' and 'command' option.
 
 
 """ NOTE: Whole design (-: string or number, *: functions, []: list, {}: dictionary) "{{{
@@ -12,29 +12,30 @@
 "   - mode                   : 'n' or 'x'. Which mode the keymapping is called.
 "   - blockwidth             : The width of selected region in blockwise visual mode.
 "   - extended               : 0 or 1. If it is called in blockwise visual mode with extending the terminal edges to line ends, then 1. Otherwise 0
+"   - keepable               : 0 or 1. If 1, 'keep' of 'cursor' local option is valid also in dot repeating.
 "   {}view                   : The dictionary to restore the view when the operarion starts.
 "   {}recipes
-"     []force                : The recipes which are forced to be used.
+"     []arg                  : The recipes which are forced to be used given through the 4th argument of operator#sandwich#prerequisite().
 "     []synchro              : The recipes which are used for the cooperation with textobj-sandwich. It works only on delete and replace action.
 "     []integrated           : The recipes which are the integrated result of all recipes. This is the one used practically.
 "     * integrate            : The function to set operator.recipes.integrated.
-"   {}cursor                 : [Linked from stuffs.cursor] The infomation to set the final position of the cursor
+"   {}cursor                 : [Linked from stuff.cursor] The infomation to set the final position of the cursor
 "     []inner_head           : The left upper edge of the assigned region. It is used in default
 "     []keep                 : The original position of the cursor. This is not valid when it started by dot command.
 "     []inner_tail           : The right bottom edge of the assigned region.
-"   {}modmark                : [Linked from stuffs.modmark] The positions of both edges of the modified region.
+"   {}modmark                : [Linked from stuff.modmark] The positions of both edges of the modified region.
 "   {}opt
-"     {}prime                : [Linked from stuffs.opt.prime] The options given through a 3rd argument of operator#sandwich#prerequisite(). This has the highest priority to use.
+"     {}arg                  : [Linked from stuff.opt.arg] The options given through the 3rd argument of operator#sandwich#prerequisite(). This has higher priority than default.
 "       * clear              : The function to clear the containts.
 "       * update             : The function to update the containts.
-"     {}default              : [Linked from stuffs.opt.default] The default options
+"     {}default              : [Linked from stuff.opt.default] The default options
 "       * clear              : The function to clear the containts.
 "       * update             : The function to update the containts.
 "   []basket                 : The list holding information and histories for the action.
-"     {}stuffs
+"     {}stuff
 "       []buns               : The list consisted of two strings to add to/replace the edges.
 "       - num                : The number of processed regions in one count. It could be more than 1 only in block wise visual mode.
-"       - done               : If the stuffs has been processed properly then 1, otehrwise 0.
+"       - done               : If the stuff has been processed properly then 1, otehrwise 0.
 "       {}cursor             : [Linked from act.cursor] Linked to operator.cursor.
 "       {}modmark            : [Linked from act.modmark] Linked to operator.modmark.
 "       {}clock              : The object to measure the time.
@@ -50,21 +51,22 @@
 "       {}opt                : [Linked from act.opt]
 "         - filter           : A strings for integrate() function to filter out redundant options.
 "         {}default          : Linked to operator.opt.default.
-"         {}prime            : Linked to operator.opt.prime.
+"         {}arg              : Linked to operator.opt.arg.
 "         {}recipe           : The copy of a snippet of recipe. But 'buns' is removed.
 "           * clear          : The function to clear the containts.
 "           * update         : The function to update the containts.
 "         {}integrated       : The integrated options which is used in practical use.
 "           * clear          : The function to clear the containts.
 "           * update         : The function to update the containts.
-"         * integrate        : The function that integrates three options (prime, recipe, default) to get 'integrated'.
+"         * integrate        : The function that integrates three options (arg, recipe, default) to get 'integrated'.
 "       []acts
 "         {}act              : The information and functions to execute an action.
 "           {}region         : The both edges of processed region.
 "           {}target         : The target position to process.
-"           {}cursor         : Linked to stuffs.cursor
-"           {}modmark        : Linked to stuffs.modmark
-"           {}opt            : Linked to stuffs.opt
+"           {}cursor         : Linked to stuff.cursor
+"           {}modmark        : Linked to stuff.modmark
+"           {}indent         : Informations to save and restore autoindent features.
+"           {}opt            : Linked to stuff.opt
 "           * add_once       : The function to execute an adding action.
 "           * delete_once    : The function to execute an delete action.
 "           * replace_once   : The function to execute an replace action.
@@ -80,7 +82,7 @@
 """ NOTE: Presumable Errors list"{{{
 " Handled in s:doautcmd()
 "   --> Some error in doautocmd.
-" 
+"
 " Handled in s:restview()
 "   --> Could not restore tabpage or window after doautocmd.
 "
@@ -92,10 +94,8 @@
 " Others are converted to OperatorSandwichError:Unknown. It should not be observed.
 "}}}
 
-" variables"{{{
-let s:type_num   = type(0)
-let s:type_list  = type([])
-let s:type_dict  = type({})
+" variables "{{{
+" null valiables
 let s:null_coord = [0, 0]
 let s:null_pos   = [0, 0, 0, 0]
 let s:null_2pos  = {
@@ -108,15 +108,30 @@ let s:null_4pos  = {
       \   'head2': copy(s:null_pos),
       \   'tail2': copy(s:null_pos),
       \ }
+
+" types
+let s:type_num  = type(0)
+let s:type_list = type([])
+let s:type_dict = type({})
+
+" patchs
+if v:version > 704 || (v:version == 704 && has('patch237'))
+  let s:has_patch_7_4_771 = has('patch-7.4.771')
+  let s:has_patch_7_4_310 = has('patch-7.4.310')
+else
+  let s:has_patch_7_4_771 = v:version > 704 || (v:version == 704 && has('patch771'))
+  let s:has_patch_7_4_310 = v:version > 704 || (v:version == 704 && has('patch310'))
+endif
+
+" features
+let s:has_reltime_and_float = has('reltime') && has('float')
+let s:has_gui_running = has('gui_running')
 "}}}
 
 """ Public funcs
 " Prerequisite
 function! operator#sandwich#prerequisite(kind, mode, ...) abort "{{{
   " make new operator object
-  if !exists('g:operator#sandwich#object')
-    let g:operator#sandwich#object = {}
-  endif
   let g:operator#sandwich#object = deepcopy(s:operator)
 
   " prerequisite
@@ -127,8 +142,8 @@ function! operator#sandwich#prerequisite(kind, mode, ...) abort "{{{
   let operator.view  = winsaveview()
   let operator.cursor.keep[0:3] = getpos('.')[0:3]
 
-  call operator.opt.prime.update(get(a:000, 0, {}))
-  let operator.recipes.force = get(a:000, 1, [])
+  call operator.opt.arg.update(get(a:000, 0, {}))
+  let operator.recipes.arg = get(a:000, 1, [])
 
   if a:mode ==# 'x' && visualmode() ==# "\<C-v>"
     " The case for blockwise selections in visual mode
@@ -151,6 +166,20 @@ function! operator#sandwich#prerequisite(kind, mode, ...) abort "{{{
   let operator.basket = []
 
   let &l:operatorfunc = 'operator#sandwich#' . a:kind
+  return
+endfunction
+"}}}
+function! operator#sandwich#keymap(kind, mode, ...) abort "{{{
+  if a:0 == 0
+    call operator#sandwich#prerequisite(a:kind, a:mode)
+  elseif a:0 == 1
+    call operator#sandwich#prerequisite(a:kind, a:mode, a:1)
+  else
+    call operator#sandwich#prerequisite(a:kind, a:mode, a:1, a:2)
+  endif
+
+  let cmd = a:mode ==# 'x' ? 'gvg@' : 'g@'
+  call feedkeys(cmd, 'n')
   return
 endfunction
 "}}}
@@ -189,60 +218,58 @@ function! operator#sandwich#query1st(kind, mode, ...) abort "{{{
 
   " prerequisite
   " NOTE: force to set highlight=0
-  let prime_opt = get(a:000, 0, {})
-  let prime_opt.highlight = 0
-  call operator#sandwich#prerequisite(a:kind, a:mode, prime_opt)
-  let operator     = g:operator#sandwich#object
+  let arg_opt = get(a:000, 0, {})
+  let arg_recipes = get(a:000, 1, [])
+  call operator#sandwich#prerequisite(a:kind, a:mode, arg_opt, arg_recipes)
+  let operator = g:operator#sandwich#object
   let operator.num = 1
   let operator.opt.timeoutlen = s:get('timeoutlen', &timeoutlen)
   let operator.opt.timeoutlen = operator.opt.timeoutlen < 0 ? 0 : operator.opt.timeoutlen
+  call operator.opt.default.update({'highlight': 0, 'query_once': 1})
 
-  " build stuffs
-  let stuffs       = deepcopy(s:stuffs)
-  let stuffs.state = 0
-  let stuffs.num   = operator.num
-  let stuffs.acts  = map(range(operator.num), 'deepcopy(s:act)')
+  " build stuff
+  let stuff = deepcopy(s:stuff)
+  let stuff.acts  = map(range(operator.num), 'deepcopy(s:act)')
 
   " put stuffs as needed
-  let operator.basket = map(range(operator.count), 'deepcopy(stuffs)')
+  let operator.basket = map(range(operator.count), 'deepcopy(stuff)')
 
   " connect links
-  for stuffs in operator.basket
-    let stuffs.cursor         = operator.cursor
-    let stuffs.modmark        = operator.modmark
-    " NOTE: stuffs.opt.filter is actually does not depend on the motionwise.
-    let stuffs.opt            = copy(operator.opt)
-    let stuffs.opt.filter     = printf('v:key =~# ''\%%(%s\)''',
+  for stuff in operator.basket
+    let stuff.cursor         = operator.cursor
+    let stuff.modmark        = operator.modmark
+    " NOTE: stuff.opt.filter is actually does not depend on the motionwise.
+    let stuff.opt            = copy(operator.opt)
+    let stuff.opt.filter     = printf('v:key =~# ''\%%(%s\)''',
           \ join(keys(s:default_opt[a:kind]['char']), '\|'))
-    let stuffs.opt.recipe     = deepcopy(s:opt)
-    let stuffs.opt.integrated = deepcopy(s:opt)
-    let stuffs.opt.integrate  = function('s:integrate_opt')
-    call stuffs.opt.integrate()
-    for act in stuffs.acts
-      let act.state   = stuffs.state
-      let act.cursor  = stuffs.cursor
-      let act.modmark = stuffs.modmark
-      let act.opt     = stuffs.opt
+    let stuff.opt.recipe     = deepcopy(s:opt)
+    let stuff.opt.integrated = deepcopy(s:opt)
+    let stuff.opt.integrate  = function('s:opt_integrate')
+    call stuff.opt.integrate()
+    for act in stuff.acts
+      let act.cursor  = stuff.cursor
+      let act.modmark = stuff.modmark
+      let act.opt     = stuff.opt
     endfor
   endfor
 
   " pick 'recipe' up and query prefered buns
   call operator.recipes.integrate(a:kind, 'all', a:mode)
   for i in range(operator.count)
-    let stuffs = operator.basket[i]
-    let opt = stuffs.opt
+    let stuff = operator.basket[i]
+    let opt = stuff.opt
 
-    call stuffs.query(operator.recipes.integrated)
-    if stuffs.buns == [] || len(stuffs.buns) < 2
+    call stuff.query(operator.recipes.integrated)
+    if stuff.buns == [] || len(stuff.buns) < 2
       break
     endif
 
     if operator.count > 1 && i == 0 && operator.state && opt.integrated.query_once
       for _i in range(1, len(operator.basket) - 1)
-        let _stuffs = operator.basket[_i]
-        call extend(_stuffs.buns, stuffs.buns, 'force')
-        call _stuffs.opt.recipe.update(stuffs.opt.recipe)
-        call _stuffs.opt.integrated()
+        let _stuff = operator.basket[_i]
+        call extend(_stuff.buns, stuff.buns, 'force')
+        call _stuff.opt.recipe.update(stuff.opt.recipe)
+        call _stuff.opt.integrated()
       endfor
       break
     endif
@@ -280,55 +307,69 @@ function! operator#sandwich#release_count() abort  "{{{
   endif
 endfunction
 "}}}
+function! operator#sandwich#predot() abort  "{{{
+  if exists('g:operator#sandwich#object')
+    let operator = g:operator#sandwich#object
+    let operator.keepable = 1
+    let operator.cursor.keep[0:3] = getpos('.')[0:3]
+  endif
+  return ''
+endfunction
+"}}}
+function! operator#sandwich#dot() abort  "{{{
+  call operator#sandwich#predot()
+  return '.'
+endfunction
+"}}}
 
 
 
 """ objects
-function! s:clear() dict abort "{{{
+function! s:opt_clear() dict abort "{{{
   call filter(self, 'v:key =~# ''\%(clear\|update\|integrate\)''')
 endfunction
 "}}}
-function! s:update(dict) dict abort "{{{
+function! s:opt_update(dict) dict abort "{{{
   call self.clear()
   call extend(self, a:dict, 'keep')
 endfunction
 "}}}
-function! s:integrate_opt() dict abort  "{{{
+function! s:opt_integrate() dict abort  "{{{
   call self.integrated.clear()
   let default = filter(copy(self.default), self.filter)
+  let arg     = filter(copy(self.arg),     self.filter)
   let recipe  = filter(copy(self.recipe),  self.filter)
-  let prime   = filter(copy(self.prime),   self.filter)
   call extend(self.integrated, default, 'force')
+  call extend(self.integrated, arg,     'force')
   call extend(self.integrated, recipe,  'force')
-  call extend(self.integrated, prime,   'force')
 endfunction
 "}}}
 " opt object  {{{
 let s:opt = {'filter': ''}
-let s:opt.clear  = function('s:clear')
-let s:opt.update = function('s:update')
+let s:opt.clear  = function('s:opt_clear')
+let s:opt.update = function('s:opt_update')
 "}}}
 
-function! s:start() dict abort  "{{{
+function! s:clock_start() dict abort  "{{{
   if self.started
     if self.paused
       let self.losstime += str2float(reltimestr(reltime(self.stoptime)))
       let self.paused = 0
     endif
   else
-    if has('reltime') && has('float')
+    if s:has_reltime_and_float
       let self.zerotime = reltime()
       let self.started  = 1
     endif
   endif
 endfunction
 "}}}
-function! s:pause() dict abort "{{{
+function! s:clock_pause() dict abort "{{{
   let self.stoptime = reltime()
   let self.paused   = 1
 endfunction
 "}}}
-function! s:erapsed() dict abort "{{{
+function! s:clock_erapsed() dict abort "{{{
   if self.started
     let total = str2float(reltimestr(reltime(self.zerotime)))
     return floor((total - self.losstime)*1000)
@@ -337,7 +378,7 @@ function! s:erapsed() dict abort "{{{
   endif
 endfunction
 "}}}
-function! s:stop() dict abort  "{{{
+function! s:clock_stop() dict abort  "{{{
   let self.started  = 0
   let self.paused   = 0
   let self.losstime = 0
@@ -351,10 +392,10 @@ let s:clock = {
       \   'stoptime': reltime(),
       \   'losstime': 0,
       \ }
-let s:clock.start   = function('s:start')
-let s:clock.pause   = function('s:pause')
-let s:clock.erapsed = function('s:erapsed')
-let s:clock.stop    = function('s:stop')
+let s:clock.start   = function('s:clock_start')
+let s:clock.pause   = function('s:clock_pause')
+let s:clock.erapsed = function('s:clock_erapsed')
+let s:clock.stop    = function('s:clock_stop')
 "}}}
 
 function! s:add_once(buns, undojoin, done, next_act) dict abort "{{{
@@ -387,6 +428,7 @@ function! s:add_once(buns, undojoin, done, next_act) dict abort "{{{
     if s:is_valid_4pos(target)
           \ && s:is_equal_or_ahead(target.head2, target.head1)
       let target.head2[0:3] = s:get_right_pos(target.head2)
+      call self.set_indent()
 
       try
         call setpos('.', target.head2)
@@ -410,6 +452,8 @@ function! s:add_once(buns, undojoin, done, next_act) dict abort "{{{
         let head = getpos("'[")
       catch /^Vim\%((\a\+)\)\=:E21/
         throw 'OperatorSandwichError:Add:ReadOnly'
+      finally
+        call self.restore_indent()
       endtry
 
       " get tail
@@ -433,7 +477,7 @@ function! s:add_once(buns, undojoin, done, next_act) dict abort "{{{
       call s:shift_for_add(self.cursor.keep,       target, a:buns, indent, is_linewise)
       call s:shift_for_add(self.cursor.inner_tail, target, a:buns, indent, is_linewise)
 
-      " update next_stuffs
+      " update next_act
       let a:next_act.region.head = copy(head)
       let a:next_act.region.tail = s:get_left_pos(tail)
 
@@ -521,7 +565,7 @@ function! s:delete_once(done, next_act) dict abort  "{{{
     call s:shift_for_delete(self.cursor.keep,       target, deletion, is_linewise)
     call s:shift_for_delete(self.cursor.inner_tail, target, deletion, is_linewise)
 
-    " update next_stuffs
+    " update next_act
     let a:next_act.region.head = copy(head)
     let a:next_act.region.tail = copy(tail)
 
@@ -561,6 +605,7 @@ function! s:replace_once(buns, undojoin, done, next_act) dict abort "{{{
     let deletion = ['', '']
     let reg = [getreg('"'), getregtype('"')]
     let cmd = "silent normal! \"\"dv:call setpos('\.', %s)\<CR>"
+    call self.set_indent()
     try
       call setpos('.', target.head2)
       let @@ = ''
@@ -598,6 +643,7 @@ function! s:replace_once(buns, undojoin, done, next_act) dict abort "{{{
       throw 'OperatorSandwichError:Replace:ReadOnly'
     finally
       call setreg('"', reg[0], reg[1])
+      call self.restore_indent()
     endtry
 
     " update tail
@@ -636,7 +682,7 @@ function! s:replace_once(buns, undojoin, done, next_act) dict abort "{{{
       endif
     endif
 
-    " update next stuffs
+    " update next_act
     let a:next_act.region.head = next_head
     let a:next_act.region.tail = next_tail
 
@@ -648,7 +694,7 @@ endfunction
 "}}}
 function! s:search(recipes) dict abort "{{{
   let recipes = deepcopy(a:recipes)
-  let filter  = '(!has_key(v:val, "deletion") || v:val.deletion)'
+  let filter  = 's:has_action(v:val, "delete")'
   call filter(recipes, filter)
   let region  = self.region
   let opt     = self.opt
@@ -688,7 +734,7 @@ function! s:search(recipes) dict abort "{{{
       if i == 1 || opt.integrated.skip_space
         let head_c = s:get_cursorchar(head)
         let tail_c = s:get_cursorchar(tail)
-        if head_c ==# tail_c
+        if head_c ==# tail_c && !(opt.integrated.skip_space == 2 && head_c =~# '\s')
           let target = {
                 \   'head1': head, 'tail1': head,
                 \   'head2': tail, 'tail2': tail,
@@ -742,24 +788,114 @@ function! s:search(recipes) dict abort "{{{
   let self.target = target
 endfunction
 "}}}
+function! s:set_indent() dict abort "{{{
+  let opt    = self.opt.integrated
+  let indent = self.indent
+
+  call extend(indent, {
+        \   'restore_indent': 0,
+        \   'autoindent': [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr],
+        \   'restore_indentkeys': 0,
+        \   'indentkeys': '',
+        \ }, 'force')
+
+  " set autoindent options
+  if opt.autoindent == 0
+    let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = [0, 0, 0, '']
+    let indent.restore_indent = 1
+  elseif opt.autoindent == 1
+    let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = [1, 0, 0, '']
+    let indent.restore_indent = 1
+  elseif opt.autoindent == 2
+    let [&l:smartindent, &l:cindent, &l:indentexpr] = [1, 0, '']
+    let indent.restore_indent = 1
+  elseif opt.autoindent == 3
+    let [&l:cindent, &l:indentexpr] = [1, '']
+    let indent.restore_indent = 1
+  endif
+
+  " set indentkeys
+  if &l:indentexpr !=# ''
+    let indent.indentkeys = &l:indentkeys
+    call self.set_indentkeys('indentkeys')
+  elseif &l:cindent
+    let indent.indentkeys = &l:cinkeys
+    call self.set_indentkeys('cinkeys')
+  endif
+endfunction
+"}}}
+function! s:restore_indent() dict abort  "{{{
+  let opt    = self.opt.integrated
+  let indent = self.indent
+
+  " restore indentkeys first
+  if indent.restore_indentkeys
+    if &l:indentexpr !=# ''
+      let &l:indentkeys = indent.indentkeys
+    elseif &l:cindent
+      let &l:cinkeys = indent.indentkeys
+    endif
+  endif
+
+  " restore autoindent options
+  if indent.restore_indent
+    if opt.autoindent == 0
+      let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = indent.autoindent
+    elseif opt.autoindent == 1
+      let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = indent.autoindent
+    elseif opt.autoindent == 2
+      let [&l:smartindent, &l:cindent, &l:indentexpr] = indent.autoindent[1:]
+    elseif opt.autoindent == 3
+      let [&l:cindent, &l:indentexpr] = indent.autoindent[2:]
+    endif
+  endif
+endfunction
+"}}}
+function! s:set_indentkeys(indentkeys) dict abort  "{{{
+  let opt    = self.opt.integrated
+  let indent = self.indent
+
+  if opt['indentkeys'] !=# ''
+    execute 'setlocal ' . a:indentkeys . '=' . opt['indentkeys']
+    let indent.restore_indentkeys = 1
+  endif
+
+  if opt['indentkeys+'] !=# ''
+    execute 'setlocal ' . a:indentkeys . '+=' . opt['indentkeys+']
+    let indent.restore_indentkeys = 1
+  endif
+
+  if opt['indentkeys-'] !=# ''
+    " It looks there is no way to add ',' itself to 'indentkeys'
+    for item in split(opt['indentkeys-'], ',')
+      execute 'setlocal ' . a:indentkeys . '-=' . item
+    endfor
+    let indent.restore_indentkeys = 1
+  endif
+endfunction
+"}}}
 " act object  {{{
 let s:act = {
       \   'region' : copy(s:null_2pos),
       \   'target' : copy(s:null_4pos),
       \   'cursor' : {},
       \   'modmark': {},
+      \   'indent' : {},
       \ }
 let s:act.add_once     = function('s:add_once')
 let s:act.delete_once  = function('s:delete_once')
 let s:act.replace_once = function('s:replace_once')
 let s:act.search       = function('s:search')
+let s:act.set_indent   = function('s:set_indent')
+let s:act.restore_indent = function('s:restore_indent')
+let s:act.set_indentkeys = function('s:set_indentkeys')
 "}}}
 
 function! s:query(recipes) dict abort  "{{{
-  let recipes = filter(deepcopy(a:recipes), 'has_key(v:val, "buns")')
-  let filter = '(!has_key(v:val, "addition") || v:val.addition)
-           \ && (!has_key(v:val, "regex") || !v:val.regex)'
-  call filter(recipes, filter)
+  let filter = 'has_key(v:val, "buns")
+          \ && (!has_key(v:val, "regex") || !v:val.regex)
+          \ && s:has_action(v:val, "add")'
+  let recipes = filter(deepcopy(a:recipes), filter)
   let opt   = self.opt.integrated
   let clock = self.clock
   let acts  = self.acts
@@ -777,11 +913,12 @@ function! s:query(recipes) dict abort  "{{{
     " query phase
     let input   = ''
     let cmdline = []
+    let last_compl_match = ['', []]
     while 1
       let c = getchar(0)
       if c == 0
         if clock.started && timeoutlen > 0 && clock.erapsed() > timeoutlen
-          let recipe = {'buns': []}
+          let [input, recipes] = last_compl_match
           break
         else
           sleep 20m
@@ -793,7 +930,7 @@ function! s:query(recipes) dict abort  "{{{
       let input .= c
 
       " check forward match
-      call filter(recipes, 's:is_input_matched(v:val, input, 0)')
+      let n_fwd = len(filter(recipes, 's:is_input_matched(v:val, input, 0)'))
 
       " check complete match
       let n_comp = len(filter(copy(recipes), 's:is_input_matched(v:val, input, 1)'))
@@ -803,20 +940,28 @@ function! s:query(recipes) dict abort  "{{{
         else
           call clock.stop()
           call clock.start()
+          let last_compl_match = [input, copy(recipes)]
+        endif
+      else
+        if clock.started && !n_fwd
+          let [input, recipes] = last_compl_match
+          break
         endif
       endif
 
       if recipes == [] | break | endif
     endwhile
+    call clock.stop()
 
     " pick up and register a recipe
     if filter(recipes, 's:is_input_matched(v:val, input, 1)') != []
       let recipe = recipes[0]
     else
-      if strlen(input) > 1 || input ==# "\<Esc>" || input ==# "\<C-c>"
+      if input ==# "\<Esc>" || input ==# "\<C-c>" || input ==# ''
         let recipe = {}
       else
-        let recipe = {'buns': [input, input]}
+        let c = split(input, '\zs')[0]
+        let recipe = {'buns': [c, c]}
       endif
     endif
 
@@ -835,7 +980,7 @@ function! s:query(recipes) dict abort  "{{{
   endtry
 endfunction
 "}}}
-function! s:show() dict abort"{{{
+function! s:show() dict abort "{{{
   let clock = self.clock
   let acts  = self.acts
   let hi_exited = 0
@@ -875,10 +1020,11 @@ function! s:show() dict abort"{{{
 endfunction
 "}}}
 function! s:command() dict abort  "{{{
+  let modmark = self.modmark
   let head = getpos("'[")
   let tail = getpos("']")
-  call setpos("'[", self.cursor.inner_head)
-  call setpos("']", self.cursor.inner_tail)
+  call setpos("'[", modmark.head)
+  call setpos("']", modmark.tail)
   for cmd in self.opt.integrated.command
     execute cmd
   endfor
@@ -895,9 +1041,9 @@ function! s:get_buns() dict abort  "{{{
   let opt = self.opt.integrated
   let buns = self.buns
 
-  if (opt.eval && !self.evaluated) || opt.eval == 2
+  if (opt.expr && !self.evaluated) || opt.expr == 2
     echo ''
-    let buns = opt.eval == 2 ? deepcopy(buns) : buns
+    let buns = opt.expr == 2 ? deepcopy(buns) : buns
     call map(buns, 'eval(v:val)')
     let self.evaluated = 1
     redraw
@@ -907,8 +1053,8 @@ function! s:get_buns() dict abort  "{{{
   return buns
 endfunction
 "}}}
-" stuffs object {{{
-let s:stuffs = {
+" stuff object {{{
+let s:stuff = {
       \   'buns'   : [],
       \   'num'    : 1,
       \   'done'   : 0,
@@ -919,10 +1065,10 @@ let s:stuffs = {
       \   'acts'   : [],
       \   'evaluated': 0,
       \ }
-let s:stuffs.query    = function('s:query')
-let s:stuffs.show     = function('s:show')
-let s:stuffs.command  = function('s:command')
-let s:stuffs.get_buns = function('s:get_buns')
+let s:stuff.query    = function('s:query')
+let s:stuff.show     = function('s:show')
+let s:stuff.command  = function('s:command')
+let s:stuff.get_buns = function('s:get_buns')
 "}}}
 
 function! s:execute(kind, motionwise) dict abort  "{{{
@@ -961,37 +1107,34 @@ function! s:initialize(kind, motionwise) dict abort "{{{
   let self.opt.timeoutlen = s:get('timeoutlen', &timeoutlen)
   let self.opt.timeoutlen = self.opt.timeoutlen < 0 ? 0 : self.opt.timeoutlen
   let self.opt.duration = s:get('highlight_duration', 200)
-  let self.opt.duration = self.opt.timeoutlen < 0 ? 0 : self.opt.duration
+  let self.opt.duration = self.opt.duration < 0 ? 0 : self.opt.duration
   let self.cursor.inner_head = region.head
   let self.cursor.inner_tail = region.tail
   call self.opt.default.update(deepcopy(g:operator#sandwich#options[a:kind][a:motionwise]))
 
   if self.state
-    " build stuffs
-    let stuffs       = deepcopy(s:stuffs)
-    let stuffs.state = self.state
-    let stuffs.num   = self.num
-    let stuffs.acts  = map(range(self.num), 'deepcopy(s:act)')
+    " build stuff
+    let stuff = deepcopy(s:stuff)
+    let stuff.acts = map(range(self.num), 'deepcopy(s:act)')
 
     " put stuffs as needed
-    let self.basket = map(range(self.count), 'deepcopy(stuffs)')
+    let self.basket = map(range(self.count), 'deepcopy(stuff)')
 
     " connect links
-    for stuffs in self.basket
-      let stuffs.cursor         = self.cursor
-      let stuffs.modmark        = self.modmark
-      let stuffs.opt            = copy(self.opt)
-      let stuffs.opt.filter     = printf('v:key =~# ''\%%(%s\)''',
+    for stuff in self.basket
+      let stuff.cursor         = self.cursor
+      let stuff.modmark        = self.modmark
+      let stuff.opt            = copy(self.opt)
+      let stuff.opt.filter     = printf('v:key =~# ''\%%(%s\)''',
             \ join(keys(s:default_opt[a:kind][a:motionwise]), '\|'))
-      let stuffs.opt.recipe     = deepcopy(s:opt)
-      let stuffs.opt.integrated = deepcopy(s:opt)
-      let stuffs.opt.integrate  = function('s:integrate_opt')
-      call stuffs.opt.integrate()
-      for act in stuffs.acts
-        let act.state   = stuffs.state
-        let act.cursor  = stuffs.cursor
-        let act.modmark = stuffs.modmark
-        let act.opt     = stuffs.opt
+      let stuff.opt.recipe     = deepcopy(s:opt)
+      let stuff.opt.integrated = deepcopy(s:opt)
+      let stuff.opt.integrate  = function('s:opt_integrate')
+      call stuff.opt.integrate()
+      for act in stuff.acts
+        let act.cursor  = stuff.cursor
+        let act.modmark = stuff.modmark
+        let act.opt     = stuff.opt
       endfor
     endfor
   else
@@ -999,32 +1142,38 @@ function! s:initialize(kind, motionwise) dict abort "{{{
     let self.modmark.head = copy(s:null_pos)
     let self.modmark.tail = copy(s:null_pos)
 
-    for stuffs in self.basket
-      let stuffs.state = self.state
-      let stuffs.num   = self.num
-      let stuffs.done  = 0
-      call stuffs.opt.integrate()
+    for stuff in self.basket
+      let stuff.done = 0
+      call stuff.opt.integrate()
 
-      let lack = self.num - len(stuffs.acts)
+      let lack = self.num - len(stuff.acts)
       if lack > 0
         let fillings = map(range(lack), 'deepcopy(s:act)')
         for act in fillings
-          let act.cursor  = stuffs.cursor
-          let act.modmark = stuffs.modmark
-          let act.opt     = stuffs.opt
+          let act.cursor  = stuff.cursor
+          let act.modmark = stuff.modmark
+          let act.opt     = stuff.opt
         endfor
-        let stuffs.acts += fillings
+        let stuff.acts += fillings
       endif
-      call map(stuffs.acts, 'extend(v:val, {"state": 0}, "force")')
+      call map(stuff.acts, 'extend(v:val, {"state": 0}, "force")')
     endfor
   endif
 
   " set initial values
-  let stuffs = self.basket[0]
+  let stuff = self.basket[0]
   for j in range(self.num)
-    let act = stuffs.acts[j]
-    let act.region = copy(region_list[j])
+    let act = stuff.acts[j]
+    let act.region = region_list[j]
   endfor
+
+  " hide_cursor
+  if s:has_gui_running
+    let self.cursor_info = &guicursor
+    set guicursor+=o:block-NONE
+  else
+    let self.cursor_info = &t_ve
+  endif
 endfunction
 "}}}
 function! s:split(region) dict abort  "{{{
@@ -1064,7 +1213,12 @@ function! s:split(region) dict abort  "{{{
         let head = getpos('.')
         call s:set_displaycoord([lnum, col_tail])
         let tail = getpos('.')
-        if !(col([lnum, '$']) == tail[2]) && tail[3] == 0 && s:is_equal_or_ahead(tail, head)
+        let endcol = col([lnum, '$'])
+        if head[2] != endcol && s:is_equal_or_ahead(tail, head)
+          if tail[2] == endcol
+            let tail[2] = endcol - 1
+            let tail[3] = 0
+          endif
           let region_list += [{'head': head, 'tail': tail}]
         else
           let region_list += [deepcopy(s:null_2pos)]
@@ -1082,12 +1236,12 @@ endfunction
 function! s:add() dict abort "{{{
   let undojoin = 0
   for i in range(self.count)
-    let stuffs = self.basket[i]
-    let next_stuffs = get(self.basket, i + 1, deepcopy(stuffs))
-    let opt = stuffs.opt.integrated
+    let stuff = self.basket[i]
+    let next_stuff = get(self.basket, i + 1, deepcopy(stuff))
+    let opt = stuff.opt.integrated
 
     for j in range(self.num)
-      let act = stuffs.acts[j]
+      let act = stuff.acts[j]
       let act.target.head1 = copy(act.region.head)
       let act.target.tail1 = act.target.head1
       let act.target.head2 = copy(act.region.tail)
@@ -1097,33 +1251,33 @@ function! s:add() dict abort "{{{
     if self.state
       " query preferable buns
       call winrestview(self.view)
-      call stuffs.query(self.recipes.integrated)
+      call stuff.query(self.recipes.integrated)
     endif
-    if stuffs.buns == [] || len(stuffs.buns) < 2
+    if stuff.buns == [] || len(stuff.buns) < 2
       break
     endif
 
     if self.count > 1 && i == 0 && self.state && opt.query_once
       for _i in range(1, len(self.basket) - 1)
-        let _stuffs = self.basket[_i]
-        call extend(_stuffs.buns, stuffs.buns, 'force')
-        call _stuffs.opt.recipe.update(stuffs.opt.recipe)
-        call _stuffs.opt.integrate()
+        let _stuff = self.basket[_i]
+        call extend(_stuff.buns, stuff.buns, 'force')
+        call _stuff.opt.recipe.update(stuff.opt.recipe)
+        call _stuff.opt.integrate()
       endfor
       let self.state = 0
     endif
 
-    let buns = stuffs.get_buns()
-    for j in range(stuffs.num)
-      let act      = stuffs.acts[j]
-      let next_act = next_stuffs.acts[j]
-      let [undojoin, stuffs.done]
-            \ = act.add_once(buns, undojoin, stuffs.done, next_act)
+    let buns = stuff.get_buns()
+    for j in range(self.num)
+      let act      = stuff.acts[j]
+      let next_act = next_stuff.acts[j]
+      let [undojoin, stuff.done]
+            \ = act.add_once(buns, undojoin, stuff.done, next_act)
     endfor
     let undojoin = self.state ? 1 : 0
 
-    if stuffs.done && opt.command != []
-      call stuffs.command()
+    if stuff.done && opt.command != []
+      call stuff.command()
     endif
   endfor
 endfunction
@@ -1133,30 +1287,30 @@ function! s:delete() dict abort  "{{{
   let duration  = self.opt.duration
 
   for i in range(self.count)
-    let stuffs = self.basket[i]
-    let next_stuffs = get(self.basket, i + 1, deepcopy(stuffs))
+    let stuff = self.basket[i]
+    let next_stuff = get(self.basket, i + 1, deepcopy(stuff))
 
     for j in range(self.num)
-      let act = stuffs.acts[j]
+      let act = stuff.acts[j]
       call act.search(self.recipes.integrated)
     endfor
-    if filter(copy(stuffs.acts), 's:is_valid_4pos(v:val.target)') == []
+    if filter(copy(stuff.acts), 's:is_valid_4pos(v:val.target)') == []
       break
     endif
 
-    if !hi_exited && stuffs.opt.integrated.highlight && duration > 0
+    if !hi_exited && stuff.opt.integrated.highlight && duration > 0
       call winrestview(self.view)
-      let hi_exited = stuffs.show()
+      let hi_exited = stuff.show()
     endif
 
-    for j in range(stuffs.num)
-      let act      = stuffs.acts[j]
-      let next_act = next_stuffs.acts[j]
-      let stuffs.done = act.delete_once(stuffs.done, next_act)
+    for j in range(self.num)
+      let act      = stuff.acts[j]
+      let next_act = next_stuff.acts[j]
+      let stuff.done = act.delete_once(stuff.done, next_act)
     endfor
 
-    if stuffs.done && stuffs.opt.integrated.command != []
-      call stuffs.command()
+    if stuff.done && stuff.opt.integrated.command != []
+      call stuff.command()
     endif
   endfor
 endfunction
@@ -1167,48 +1321,48 @@ function! s:replace() dict abort  "{{{
 
   let undojoin = 0
   for i in range(self.count)
-    let stuffs = self.basket[i]
-    let next_stuffs = get(self.basket, i + 1, deepcopy(stuffs))
-    let opt = stuffs.opt.integrated
+    let stuff = self.basket[i]
+    let next_stuff = get(self.basket, i + 1, deepcopy(stuff))
+    let opt = stuff.opt.integrated
 
     for j in range(self.num)
-      let act = stuffs.acts[j]
+      let act = stuff.acts[j]
       call act.search(self.recipes.integrated)
     endfor
-    if filter(copy(stuffs.acts), 's:is_valid_4pos(v:val.target)') == []
+    if filter(copy(stuff.acts), 's:is_valid_4pos(v:val.target)') == []
       break
     endif
 
     if self.state
       " query preferable buns
       call winrestview(self.view)
-      call stuffs.query(self.recipes.integrated)
+      call stuff.query(self.recipes.integrated)
     endif
-    if stuffs.buns == [] || len(stuffs.buns) < 2
+    if stuff.buns == [] || len(stuff.buns) < 2
       break
     endif
 
     if self.count > 1 && i == 0 && self.state && opt.query_once
       for _i in range(1, len(self.basket) - 1)
-        let _stuffs = self.basket[_i]
-        call extend(_stuffs.buns, stuffs.buns, 'force')
-        call _stuffs.opt.recipe.update(stuffs.opt.recipe)
-        call _stuffs.opt.integrate()
+        let _stuff = self.basket[_i]
+        call extend(_stuff.buns, stuff.buns, 'force')
+        call _stuff.opt.recipe.update(stuff.opt.recipe)
+        call _stuff.opt.integrate()
       endfor
       let self.state = 0
     endif
 
-    let buns = stuffs.get_buns()
-    for j in range(stuffs.num)
-      let act      = stuffs.acts[j]
-      let next_act = next_stuffs.acts[j]
-      let [undojoin, stuffs.done]
-            \ = act.replace_once(buns, undojoin, stuffs.done, next_act)
+    let buns = stuff.get_buns()
+    for j in range(self.num)
+      let act      = stuff.acts[j]
+      let next_act = next_stuff.acts[j]
+      let [undojoin, stuff.done]
+            \ = act.replace_once(buns, undojoin, stuff.done, next_act)
     endfor
     let undojoin = self.state ? 1 : 0
 
-    if stuffs.done && opt.command != []
-      call stuffs.command()
+    if stuff.done && opt.command != []
+      call stuff.command()
     endif
   endfor
 endfunction
@@ -1232,28 +1386,31 @@ function! s:finalize() dict abort  "{{{
     " set cursor position
     let cursor_opt = 'inner_head'
     for i in range(self.count - 1, 0, -1)
-      let stuffs = self.basket[i]
-      if stuffs.done
-        let cursor_opt = stuffs.opt.integrated.cursor
-        let cursor_opt = cursor_opt =~# '^\%(keep\|inner_\%(head\|tail\)\|front\|end\)$'
+      let stuff = self.basket[i]
+      if stuff.done
+        let cursor_opt = stuff.opt.integrated.cursor
+        let cursor_opt = cursor_opt =~# '^\%(keep\|\%(inner_\)\?\%(head\|tail\)\)$'
                       \ ? cursor_opt : 'inner_head'
         break
       endif
     endfor
 
-    if self.state
+    if self.state || self.keepable
       let cursor = cursor_opt =~# '^\%(keep\|inner_\%(head\|tail\)\)$' ? self.cursor[cursor_opt]
-              \ : cursor_opt ==# 'front' && modmark.head != s:null_pos ? modmark.head
-              \ : cursor_opt ==# 'end' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
+              \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
+              \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
               \ : self.cursor['inner_head']
+      let self.keepable = 0
     else
-      " In the case of dot repeat, there is no way to keep original position.
+      " In the case of dot repeat, it is impossible to keep original position
+      " unless self.keepable == 1.
       let cursor = cursor_opt =~# '^inner_\%(head\|tail\)$' ? self.cursor[cursor_opt]
-              \ : cursor_opt ==# 'front' && modmark.head != s:null_pos ? modmark.head
-              \ : cursor_opt ==# 'end' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
+              \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
+              \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
               \ : self.cursor['inner_head']
     endif
-    if v:version > 704 || (v:version == 704 && has('patch310'))
+
+    if s:has_patch_7_4_310
       " set curswant explicitly
       call setpos('.', cursor + [cursor[2]])
     else
@@ -1261,14 +1418,22 @@ function! s:finalize() dict abort  "{{{
     endif
   endif
 
+  " restore cursor
+  if s:has_gui_running
+    set guicursor&
+    let &guicursor = self.cursor_info
+  else
+    let &t_ve = self.cursor_info
+  endif
+
   " set state
   let self.state = 0
 endfunction
 "}}}
-function! s:integrate_recipes(kind, motionwise, mode) dict abort  "{{{
-  let self.integrated  = []
-  if self.force != []
-    let self.integrated += self.force
+function! s:recipe_integrate(kind, motionwise, mode) dict abort  "{{{
+  let self.integrated = []
+  if self.arg != []
+    let self.integrated += self.arg
   else
     let self.integrated += sandwich#get_recipes()
     let self.integrated += operator#sandwich#get_recipes()
@@ -1277,7 +1442,8 @@ function! s:integrate_recipes(kind, motionwise, mode) dict abort  "{{{
   let filter = 's:has_filetype(v:val)
            \ && s:has_kind(v:val, a:kind)
            \ && s:has_motionwise(v:val, a:motionwise)
-           \ && s:has_mode(v:val, a:mode)'
+           \ && s:has_mode(v:val, a:mode)
+           \ && s:expr_filter(v:val)'
   call filter(self.integrated, filter)
   call reverse(self.integrated)
 endfunction
@@ -1291,21 +1457,22 @@ let s:operator = {
       \   'view'      : {},
       \   'blockwidth': 0,
       \   'extended'  : 0,
+      \   'keepable'  : 0,
       \   'recipes'   : {
-      \     'force'     : [],
+      \     'arg'       : [],
       \     'synchro'   : [],
       \     'integrated': [],
       \   },
       \   'cursor': {
-      \     'front'     : copy(s:null_pos),
+      \     'head'      : copy(s:null_pos),
       \     'inner_head': copy(s:null_pos),
       \     'keep'      : copy(s:null_pos),
       \     'inner_tail': copy(s:null_pos),
-      \     'end'       : copy(s:null_pos),
+      \     'tail'      : copy(s:null_pos),
       \   },
       \   'modmark': copy(s:null_2pos),
       \   'opt': {
-      \     'prime'  : copy(s:opt),
+      \     'arg'    : copy(s:opt),
       \     'default': copy(s:opt),
       \   },
       \   'basket'    : [],
@@ -1317,7 +1484,7 @@ let s:operator.add        = function('s:add')
 let s:operator.delete     = function('s:delete')
 let s:operator.replace    = function('s:replace')
 let s:operator.finalize   = function('s:finalize')
-let s:operator.recipes.integrate = function('s:integrate_recipes')
+let s:operator.recipes.integrate = function('s:recipe_integrate')
 "}}}
 
 
@@ -1356,7 +1523,29 @@ function! s:has_mode(candidate, mode) abort "{{{
   if !has_key(a:candidate, 'mode')
     return 1
   else
-    return stridx(a:candidate['mode'], a:mode) > -1
+    return stridx(join(a:candidate['mode'], ''), a:mode) > -1
+  endif
+endfunction
+"}}}
+function! s:has_action(candidate, action) abort "{{{
+  if !has_key(a:candidate, 'action')
+    return 1
+  else
+    let filter = 'v:val ==# a:action || v:val ==# "all"'
+    return filter(copy(a:candidate['action']), filter) != []
+  endif
+endfunction
+"}}}
+function! s:expr_filter(candidate) abort  "{{{
+  if !has_key(a:candidate, 'expr_filter')
+    return 1
+  else
+    for filter in a:candidate['expr_filter']
+      if !eval(filter)
+        return 0
+      endif
+    endfor
+    return 1
   endif
 endfunction
 "}}}
@@ -1367,7 +1556,7 @@ function! s:doautocmd(name) abort "{{{
   try
     execute 'silent doautocmd <nomodeline> User ' . a:name
   catch
-    let errormsg = printf('operator-sandwich: An error occurred in autocmd %s. [%s] %s', a:name, v:throwpoint, v:exeception)
+    let errormsg = printf('operator-sandwich: An error occurred in autocmd %s. [%s] %s', a:name, v:throwpoint, v:exception)
     echohl ErrorMsg
     echomsg errormsg
     echohl NONE
@@ -1461,7 +1650,7 @@ function! s:check_edges(head, tail, candidate, opt) abort  "{{{
   if head1 != a:head[1:2] | return s:null_4pos | endif
 
   call setpos('.', a:tail)
-  let tail2 = searchpos(patterns[1], 'bce', a:head[1])
+  let tail2 = s:searchpos_bce(a:tail, patterns[1], a:head[1])
 
   if tail2 != a:tail[1:2] | return s:null_4pos | endif
 
@@ -1492,7 +1681,7 @@ function! s:search_edges(head, tail, candidate, opt) abort "{{{
   let head1 = searchpos(patterns[0], 'c', a:tail[1])
 
   call setpos('.', a:tail)
-  let tail2 = searchpos(patterns[1], 'bce', a:head[1])
+  let tail2 = s:searchpos_bce(a:tail, patterns[1], a:head[1])
 
   if head1 == s:null_coord || tail2 == s:null_coord
         \ || s:is_equal_or_ahead(s:c2p(head1), s:c2p(tail2))
@@ -1623,6 +1812,26 @@ function! s:get_external_diff_region(head, tail, candidate, opt) abort  "{{{
     return s:null_4pos
   endif
 endfunction
+"}}}
+" function! s:searchpos_bce(curpos, pattern, stopline)  "{{{
+if s:has_patch_7_4_771
+  function! s:searchpos_bce(curpos, pattern, stopline) abort
+    return searchpos(a:pattern, 'bce', a:stopline)
+  endfunction
+else
+  " workaround for unicode string (because of a bug of vim)
+  " If the cursor is on a unicode character(uc), searchpos(uc, 'bce', stopline) always returns [0, 0],
+  " though searchpos(uc, 'bce') returns a correct value.
+  function! s:searchpos_bce(curpos, pattern, stopline) abort
+    if a:curpos[1] == line('$') && a:curpos[2] == col([line('$'), '$'])
+      normal! h
+      return searchpos(a:pattern, 'e', a:stopline)
+    else
+      normal! l
+      return searchpos(a:pattern, 'be', a:stopline)
+    endif
+  endfunction
+endif
 "}}}
 
 " position shifting
@@ -2022,7 +2231,7 @@ if exists('g:operator#sandwich#default_recipes')
   unlockvar! g:operator#sandwich#default_recipes
 endif
 let g:operator#sandwich#default_recipes = [
-      \   {'buns': ['input("operator-sandwich:head: ")', 'input("operator-sandwich:tail: ")'], 'kind': ['add', 'replace'], 'eval': 1, 'input': ['f']},
+      \   {'buns': ['input("operator-sandwich:head: ")', 'input("operator-sandwich:tail: ")'], 'kind': ['add', 'replace'], 'action': ['add'], 'expr': 1, 'input': ['i']},
       \ ]
 lockvar! g:operator#sandwich#default_recipes
 "}}}
@@ -2031,37 +2240,46 @@ lockvar! g:operator#sandwich#default_recipes
 let s:default_opt = {}
 let s:default_opt.add = {}
 let s:default_opt.add.char = {
-      \   'cursor'    : 'inner_head',
-      \   'query_once': 0,
-      \   'eval'      : 0,
-      \   'noremap'   : 1,
-      \   'skip_space': 0,
-      \   'highlight' : 1,
-      \   'command'   : [],
-      \   'linewise'  : 0,
-      \   'addition'  : 1,
+      \   'cursor'     : 'inner_head',
+      \   'query_once' : 0,
+      \   'expr'       : 0,
+      \   'noremap'    : 1,
+      \   'skip_space' : 0,
+      \   'highlight'  : 1,
+      \   'command'    : [],
+      \   'linewise'   : 0,
+      \   'autoindent' : 1,
+      \   'indentkeys' : '',
+      \   'indentkeys+': '',
+      \   'indentkeys-': '',
       \ }
 let s:default_opt.add.line = {
       \   'cursor'    : 'inner_head',
       \   'query_once': 0,
-      \   'eval'      : 0,
+      \   'expr'      : 0,
       \   'noremap'   : 1,
       \   'skip_space': 1,
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 1,
-      \   'addition'  : 1,
+      \   'autoindent' : 1,
+      \   'indentkeys' : '',
+      \   'indentkeys+': '',
+      \   'indentkeys-': '',
       \ }
 let s:default_opt.add.block = {
       \   'cursor'    : 'inner_head',
       \   'query_once': 0,
-      \   'eval'      : 0,
+      \   'expr'      : 0,
       \   'noremap'   : 1,
       \   'skip_space': 1,
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 0,
-      \   'addition'  : 1,
+      \   'autoindent' : 1,
+      \   'indentkeys' : '',
+      \   'indentkeys+': '',
+      \   'indentkeys-': '',
       \ }
 let s:default_opt.delete = {}
 let s:default_opt.delete.char = {
@@ -2073,18 +2291,16 @@ let s:default_opt.delete.char = {
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 0,
-      \   'deletion'  : 1,
       \ }
 let s:default_opt.delete.line = {
       \   'cursor'    : 'inner_head',
       \   'noremap'   : 1,
       \   'regex'     : 0,
-      \   'skip_space': 1,
+      \   'skip_space': 2,
       \   'skip_char' : 0,
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 1,
-      \   'deletion'  : 1,
       \ }
 let s:default_opt.delete.block = {
       \   'cursor'    : 'inner_head',
@@ -2095,50 +2311,55 @@ let s:default_opt.delete.block = {
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 0,
-      \   'deletion'  : 1,
       \ }
 let s:default_opt.replace = {}
 let s:default_opt.replace.char = {
       \   'cursor'    : 'inner_head',
       \   'query_once': 0,
       \   'regex'     : 0,
-      \   'eval'      : 0,
+      \   'expr'      : 0,
       \   'noremap'   : 1,
       \   'skip_space': 1,
       \   'skip_char' : 0,
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 0,
-      \   'addition'  : 1,
-      \   'deletion'  : 1,
+      \   'autoindent' : 1,
+      \   'indentkeys' : '',
+      \   'indentkeys+': '',
+      \   'indentkeys-': '',
       \ }
 let s:default_opt.replace.line = {
       \   'cursor'    : 'inner_head',
       \   'query_once': 0,
       \   'regex'     : 0,
-      \   'eval'      : 0,
+      \   'expr'      : 0,
       \   'noremap'   : 1,
-      \   'skip_space': 1,
+      \   'skip_space': 2,
       \   'skip_char' : 0,
       \   'highlight' : 1,
       \   'command'   : [],
-      \   'linewise'  : 1,
-      \   'addition'  : 1,
-      \   'deletion'  : 1,
+      \   'linewise'  : 0,
+      \   'autoindent' : 1,
+      \   'indentkeys' : '',
+      \   'indentkeys+': '',
+      \   'indentkeys-': '',
       \ }
 let s:default_opt.replace.block = {
       \   'cursor'    : 'inner_head',
       \   'query_once': 0,
       \   'regex'     : 0,
-      \   'eval'      : 0,
+      \   'expr'      : 0,
       \   'noremap'   : 1,
       \   'skip_space': 1,
       \   'skip_char' : 0,
       \   'highlight' : 1,
       \   'command'   : [],
       \   'linewise'  : 0,
-      \   'addition'  : 1,
-      \   'deletion'  : 1,
+      \   'autoindent' : 1,
+      \   'indentkeys' : '',
+      \   'indentkeys+': '',
+      \   'indentkeys-': '',
       \ }
 function! s:initialize_options(...) abort  "{{{
   let manner = a:0 ? a:1 : 'keep'

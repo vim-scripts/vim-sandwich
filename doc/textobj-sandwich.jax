@@ -1,4 +1,4 @@
-*textobj-sandwich.jax*	日本語ヘルプ	Last change:23-May-2015.
+*textobj-sandwich.jax*	日本語ヘルプ	Last change:23-Jul-2015.
 
 “挟まれた”テキストを検索し選択するためのテキストオブジェクトです。
 
@@ -32,15 +32,18 @@ CONFIGURATION			|textobj-sandwich-configuration|
     regex
     skip_regex
     quoteescape
-    eval
+    expr
     synchro
     noremap
     syntax
     match_syntax
     skip_breaking
   GLOBAL OPTIONS
+    timeoutlen			|g:textobj#sandwich#timeoutlen|
+    stimeoutlen			|g:textobj#sandwich#stimeoutlen|
+    latest_jump			|g:textobj#sandwich#latest_jump|
 MISCELLANEOUS			|textobj-sandwich-miscellaneous|
-  dib で欲しいのははそれじゃない
+  dib で欲しいのはそれじゃない
   頻繁に「 Timed out 」となる
   誤操作でカーソルが飛んでいった！
 
@@ -163,21 +166,94 @@ g:textobj_sandwich_no_default_key_mappings を定義してください。
 
 <Plug>(textobj-sandwich-auto-i)		*<Plug>(textobj-sandwich-auto-i)*
 	括弧などに挟まれた文字列を自動的に検索するテキストオブジェクトです。こ
-	のキーマッピングは括弧などに囲まれた内側の文字列を選択します。
+	のキーマッピングは括弧などに囲まれた内側の文字列を選択します。デフォル
+	トではオペレータ待機モードとビジュアルモードの ib にマップされていま
+	す。また、オペレータ待機モード |:omap| 、ビジュアルモード |:xmap| に加
+	えノーマルモード |:nmap| で使用することもできます。
 
 <Plug>(textobj-sandwich-auto-a)		*<Plug>(textobj-sandwich-auto-a)*
 	括弧などに挟まれた文字列を自動的に検索するテキストオブジェクトです。こ
-	のキーマッピングは括弧などの囲みを含む文字列を選択します。
+	のキーマッピングは括弧などの囲みを含む文字列を選択します。デフォルトで
+	はオペレータ待機モードとビジュアルモードの ab にマップされています。ま
+	た、オペレータ待機モード |:omap| 、ビジュアルモード |:xmap| に加えノー
+	マルモード |:nmap| で使用することもできます。
+
 
 <Plug>(textobj-sandwich-query-i)	*<Plug>(textobj-sandwich-query-i)*
 	括弧などに挟まれた文字列をユーザーの入力に応じて検索するテキストオブジ
 	ェクトです。このキーマッピングは括弧などに囲まれた内側の文字列を選択し
-	ます。
+	ます。デフォルトではオペレータ待機モードとビジュアルモードの ib にマッ
+	プされています。また、オペレータ待機モード |:omap| 、ビジュアルモード
+	|:xmap| に加えノーマルモード |:nmap| で使用することもできます。
+
 
 <Plug>(textobj-sandwich-query-a)	*<Plug>(textobj-sandwich-query-a)*
 	括弧などに挟まれた文字列をユーザーの入力に応じて検索するテキストオブジ
 	ェクトです。このキーマッピングは括弧などの囲みを含む文字列を選択します
-	。
+	。デフォルトではオペレータ待機モードとビジュアルモードの ib にマップさ
+	れています。また、オペレータ待機モード |:omap| 、ビジュアルモード
+	|:xmap| に加えノーマルモード |:nmap| で使用することもできます。
+
+
+
+
+キーマッピング関数~
+
+ユーザーは新しいキーマッピングを定義するのに以下の関数を使うこともできます。
+
+					*textobj#sandwich#auto()*
+textobj#sandwich#auto(mode, a_or_i[, options[, recipes]])
+	この関数はテキストオブジェクトのキーマッピングを定義するのにつかわれま
+	す。
+>
+	onoremap <silent><expr> ib textobj#sandwich#auto('o', 'i')
+	xnoremap <silent><expr> ib textobj#sandwich#auto('x', 'i')
+	onoremap <silent><expr> ab textobj#sandwich#auto('o', 'a')
+	xnoremap <silent><expr> ab textobj#sandwich#auto('x', 'a')
+<
+	もし空でない辞書変数が省略可能な第三引数に与えられた場合、辞書に含まれ
+	る local option はそのキーマッピングで使われるオプションのデフォルト値
+	を上書きします。
+>
+	" example 1
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', {'expand_range': 0})
+
+	" example 2
+	let g:sandwich_alt_options = {'expand_range': 0}
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', g:sandwich_alt_options)
+<
+
+	空でないレシピのリストが省略可能な第四引数に与えられた場合、そのキーマ
+	ッピングは |sandwich#recipes| (|sandwich#default_recipes|) や
+	|textobj#sandwich#recipes| (|textobj#sandwich#default_recipes|) の
+	かわりに引数に与えられたリストを参照します。
+>
+	" example 1
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', {}, [{'buns': ['(', ')']}])
+
+	" example 2
+	let g:sandwich_alt_recipes = [{'buns': ['(', ')']}]
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', {}, g:sandwich_alt_recipes)
+<
+
+
+
+					*textobj#sandwich#query()*
+textobj#sandwich#query(mode, a_or_i[, options[, recipes]])
+	この関数は |textobj#sandwich#auto()| と同様の関数ですが、
+	|<Plug>(textobj-sandwich-query-i)| や
+	|<Plug>(textobj-sandwich-query-a)| などの query 系列の
+	テキストオブジェクトを定義するのに使われます。
+>
+	onoremap <silent><expr> is textobj#sandwich#query('o', 'i')
+	xnoremap <silent><expr> is textobj#sandwich#query('x', 'i')
+	onoremap <silent><expr> as textobj#sandwich#query('o', 'a')
+	xnoremap <silent><expr> as textobj#sandwich#query('x', 'a')
+<
 
 
 
@@ -434,33 +510,41 @@ mode
 
 
 
-operator
-	組み合わせて使われるオペレータの種類によってレシピを選別するフィルター
-	です。値はオペレータを表す文字列を含むリストです。組み込みオペレータで
-	あればオペレータキーマッピングの文字をリストに加えてください。ユーザー
-	定義オペレータでは文字列の代わりに二要素のリストを置きます。最初の要素
-	は文字列 |g@| でなければいけません。二つ目の要素は 'operatorfunc' の名
-	前の文字列です。
+expr_filter
+	ユーザーがフィルターを自作して使うことができます。リストの要素は式
+	|expression| として評価され、評価値が真 (1) の場合にはそのレシピは有効
+	となり、評価値が偽 (0) の場合にはレシピは無効となります。
+>
+	" A filter should be defined in somewhere, for example in your vimrc.
+	function! FilterValid()
+	    return 1
+	endfunction
 
-	次のレシピは |d| オペレータで使ったときのみ有効です。
->
+	function! FilterInvalid()
+	    return 0
+	endfunction
+
+	" This recipe is valid
 	let g:sandwich#recipes += [
-	  \    {'buns': ['if', 'endif'], 'operator': ['d'], 'input': ['if']}
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterValid()']}
+	  \  ]
+
+	" This recipe is invalid
+	let g:sandwich#recipes += [
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterInvalid()']}
 	  \  ]
 <
-	次の例はユーザー定義オペレータの例です。
+	例えば、次のようなフィルターを定義すると特定のオペレーターでのみ有効な
+	レシピを作ることができます。
 >
+	function! FilterOperator(operator)
+	    return a:operator ==# v:operator ? 1 : 0
+	endfunction
+
+	" This recipe is valid only with d operator.
 	let g:sandwich#recipes += [
-	  \    {
-	  \      'buns': ['(', ')'],
-	  \      'operator': [['g@', 'operator#sandwich#delete']]
-	  \    }
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterOperator("d")']}
 	  \  ]
-<
-	'operatorfunc' はそのオペレータを使用後に次のコマンドを叩くことで調べ
-	られます。
->
-	:echo &operatorfunc
 <
 
 
@@ -504,7 +588,7 @@ g:textobj#sandwich#options		*g:textobj#sandwich#options*
 	    - regex
 	    - skip_regex
 	    - quoteescape
-	    - eval
+	    - expr
 	    - synchro
 	    - noremap
 	    - syntax
@@ -592,6 +676,30 @@ skip_regex
 	" Press dib
 	" baaaaaaaar   --->   bar
 <
+	例えば、シングルクオーテーションに囲まれた領域内の連続した二つのシング
+	ルクオーテーションは一つのシングルクオーテーションとみなされます。
+>
+	:echo 'foo''bar'		" -> foo'bar
+<
+	これをスキップするのにこのオプションが使えます。
+>
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ["'", "'"],
+	  \     'filetype': ['vim'],
+	  \     'expand_range': 0,
+	  \     'skip_regex':
+	  \       [
+	  \         "[^']\\%(''\\)*\\%#\\zs''",
+	  \         "[^']\\%(''\\)*'\\%#\\zs'",
+	  \       ],
+	  \     'quoteescape': 1,
+	  \     'match_syntax': 2,
+	  \   }
+	  \ ]
+<
+	検索の間、内部的にカーソルを動かしているので、カーソルを表す正規表現の
+	|\%#| が使えます。
 
 
 
@@ -609,7 +717,7 @@ quoteescape
 
 
 
-eval
+expr
 	このオプションの値が 1 か 2 なら "buns" は式として評価されてから検索さ
 	れます。値が 1 の場合は一度だけ評価され、|.| コマンドでは同じものが使
 	用されます。値が 2 の場合は |.| コマンドで繰り返される毎に評価されます
@@ -617,8 +725,31 @@ eval
 	れた範囲を検索します。 (参考: |let-@|)
 >
 	let g:sandwich#recipes += [
-	  \   {'buns': ['@@', '@@'], 'eval': 1, 'input': ['@']}
+	  \   {'buns': ['@@', '@@'], 'expr': 1, 'input': ['@']}
 	  \ ]
+<
+	NOTE: もし式が |getchar()| や |input()| でユーザーに入力を求める場合、
+	      |operator-sandwich| の囲みを外すオペレータや |textobj-sandwich|
+	      の |<Plug>(textobj-sandwich-auto-i)| や
+	      |<Plug>(textobj-sandwich-auto-a)| で不都合が出ることがあります。
+	      この問題を避けるために、 "kind" フィルター及び "synchro" オプシ
+	      ョンを併用することが推奨されます。例えば次のレシピは二文字の入力
+	      を求め、その二文字に囲まれたテキストを選択します。
+>
+	let g:textobj#sandwich#recipes += [
+	  \    {
+	  \      'buns': ['GetChar()', 'GetChar()'],
+	  \      'kind': ['query'],
+	  \      'expr': 1,
+	  \      'synchro': 1,
+	  \      'input': ['f']
+	  \    },
+	  \ ]
+
+	function! GetChar() abort
+	  let c = getchar()
+	  return type(c) == type(0) ? nr2char(c) : c
+	endfunction
 <
 	デフォルト値
 	  * query: 0
@@ -630,10 +761,11 @@ synchro
 	このオプションが真の場合、|<Plug>(operator-sandwich-delete)| 及び
 	|<Plug>(operator-sandwich-replace)| と組み合わせて使われると、マッチし
 	たレシピがこれらのオペレータに渡され高い優先度で削除/置換されます。こ
-	のオプションは |g:textobj#sandwich#recipes| 内の "eval" オプションで評
+	のオプションは |g:textobj#sandwich#recipes| 内の "expr" オプションで評
 	価されたレシピをこれらのオペレータと連携させるのに役にたつでしょう。レ
-	シピが渡される際に "kind" フィルターに "replace" and "delete" が自動的
-	に追加されます。
+	シピが渡される際に "kind" キーをもち、 "delete" と "replace" の両方を
+	持たない場合、 "kind" フィルターに "replace" and "delete" が自動的に追
+	加されます。
 	こちらの項もご覧ください。 |operator-sandwich-configuration|
 
 	デフォルト値
@@ -675,7 +807,8 @@ syntax
 	      されます。シンタックススタックは次のようなキーマッピングを対象文
 	      字列の上で使用することにより確認できます。
 >
-	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')), 'synIDattr(synIDtrans(v:val), "name")')<CR>
+	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')),
+	                        \ 'synIDattr(synIDtrans(v:val), "name")')<CR>
 <
 	デフォルト値
 	  * query: []
@@ -685,11 +818,12 @@ syntax
 
 match_syntax
 	もしこのオプションが 1 のとき、テキストオブジェクトは文字列両端の囲み
-	それぞれの先頭のシンタックスハイライトが一致していることを確認します。
-	一致しなければその候補はスキップされるでしょう。さらにこのオプションが
-	2 の時には、これに加えて囲まれたテキストの両端も同じくハイライトが一致
-	していることを確かめます。例えば "" は一般的にそれ自体を含み内部の文字
-	列も String シンタックスが適用されているでしょう。
+	のシンタックスハイライトが一致していることを確認します。一致しなければ
+	その候補はスキップされるでしょう。さらにこのオプションが 2 の時には、
+	これに加えて囲まれたテキストの両端も同じくハイライトが一致していること
+	を確かめます。例えば "" は一般的にそれ自体を含み、内部の文字列も
+	Stringシンタックスが適用されているでしょう。囲み文字が一文字でない場合
+	はそれぞれの先頭位置が確認されます。
 >
 	let g:sandwich#recipes += [
 	  \   {
@@ -699,16 +833,26 @@ match_syntax
 	  \     'match_syntax': 2
 	  \ ]
 <
-	NOTE: 適用されたハイライトグループは次のようなキーマッピングを対象文字
-	      列の上で使用することで調べられます。
+	NOTE: 適用されたシンタックスアイテムは次のようなキーマッピングを対象文
+	      字列の上で使用することで調べられます。
 >
-	nnoremap <Leader>S :echo synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')<CR>
+	nnoremap <Leader>S
+	\ :echo synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')<CR>
 <
-	      先頭の囲みの先端のハイライトグループがほかの位置のシンタックスス
-	      タックに含まれていれば成功とみなされます。シンタックススタックは
-	      次のキーマッピングで確認できます。
+	      文字列両端の囲みの表示されているシンタックスは厳密に一致している
+	      必要があります。囲みの内側のシンタックスについては少し条件が緩和
+	      され、文字列囲みのシンタックスがシンタックススタックに含まれてい
+	      れば一致とみなされます。これは例えば変換指定子 "%s" のようなもの
+	      がしばしば String 以外の色でハイライトされることを考慮するためで
+	      す。表示上の色は違ってもシンタックススタックに String が含まれて
+	      いることが期待できるため、表示上の色は違っても通常の文字列リテラ
+	      ルと同様に扱われます。シンタックススタックは次のようなキーマッピ
+	      ングを調べたいテキスト上で使用することで確認できます。透過属性が
+	      指定されていない限りリストの最後の要素が表示されている実効シンタ
+	      ックスアイテムです。
 >
-	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')), 'synIDattr(synIDtrans(v:val), "name")')<CR>
+	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')),
+	                        \ 'synIDattr(synIDtrans(v:val), "name")')<CR>
 <
 	デフォルト値
 	  * query: 0
@@ -789,16 +933,16 @@ g:textobj#sandwich#latest_jump		*g:textobj#sandwich#latest_jump*
 	\        'input("textobj-sandwich:tail: ")'
 	\    ],
 	\    'kind': ['query'],
-	\    'eval': 1,
+	\    'expr': 1,
 	\    'regex': 1,
 	\    'synchro': 1,
-	\    'input': ['f']
+	\    'input': ['i']
 	\ },
 <
 一つ一つの要素の意味は上で説明されています。重要なのはこのレシピが f という
 input によって発火することと、その機能によりインスタントなレシピが定義できるこ
 とです。このように使います。まず、このレシピを呼びましょう、例えばカーソルを
-foobarbaz という文字列に合わせ disf と入力します。
+foobarbaz という文字列に合わせ disi と入力します。
 >
 	foobarbaz
 <
@@ -824,7 +968,7 @@ foobarbaz という文字列に合わせ disf と入力します。
 ==============================================================================
 MISCELLANEOUS				*textobj-sandwich-miscellaneous*
 
-dib で欲しいのははそれじゃない~
+dib で欲しいのはそれじゃない~
 	キー入力 dib は次のように働きます。これを
 >
 	(
@@ -856,10 +1000,9 @@ dib で欲しいのははそれじゃない~
 
 
 誤操作でカーソルが飛んでいった！~
-	慌てないでください。編集結果は |u| コマンドで戻せるでしょう。あるいは
-	単にビジュアルモード選択なら |``| コマンドでカーソルをもとの位置に戻す
-	ことができます。こちらも合わせてご覧ください。
-	|g:textobj#sandwich#latest_jump|
+	慌てないでください。編集結果は |u| コマンドで戻せるでしょう。カーソル
+	位置は |``| コマンドでもとの位置に戻すことができます。こちらも合わせて
+	ご覧ください。|g:textobj#sandwich#latest_jump|
 
 
 

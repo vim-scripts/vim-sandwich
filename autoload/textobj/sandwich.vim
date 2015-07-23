@@ -3,7 +3,6 @@
 "       region is employed for 'external' user-defined textobjects, it makes
 "       impossible to repeat by dot command. Thus, 'external' is checked by
 "       using visual selection (xmap) in any case.
-" TODO: add a way to use user defined filter
 " TODO: add a 'skip_expr' option, like {skip} argument for searchpair()
 
 """ NOTE: Whole design (-: string or number, *: functions, []: list, {}: dictionary) "{{{
@@ -13,19 +12,19 @@
 "   - a_or_i                : 'a' or 'i'. It means 'a sandwich' or 'inner sandwich'. See :help text-objects.
 "   - mode                  : 'o' or 'x'. Which mode the keymapping is called.
 "   - count                 : Positive integer. The assigned {count}
-"   []cursor                : [Linked from stuffs.cursor] The original position of the cursor
+"   []cursor                : [Linked from stuff.cursor] The original position of the cursor
 "   {}view                  : The dictionary to restore the view when it starts.
 "   - done                  : If the textobject could find the target and select, then 1. Otherwise 0.
 "   - visualmode            : If the textobject is called in blockwise visual mode, then '<C-v>'. Otherwise 'v'.
 "   []recipes
-"     []force               : The recipes which is used mandatory if it is not empty. It could be given through the 4th argument.
+"     []arg                 : The recipes which is used mandatory if it is not empty. It could be given through the 4th argument.
 "     []integrated          : The recipes which are the integrated result of all recipes. This is the one used practically.
 "     * integrate           : The function to set operator.recipes.integrated.
 "   {}opt
-"     {}prime               : [Linked from stuffs.opt.prime] The options given through the 3rd argument of textobj#sandwich#auto(). This has the highest priority to use.
+"     {}arg                 : [Linked from stuff.opt.arg] The options given through the 3rd argument of textobj#sandwich#auto(). This has the highest priority to use.
 "       * clear             : The function to clear the containts.
 "       * update            : The function to update the containts.
-"     {}default             : [Linked from stuffs.opt.default] The default options
+"     {}default             : [Linked from stuff.opt.default] The default options
 "       * clear             : The function to clear the containts.
 "       * update            : The function to update the containts.
 "   {}clock                 : The object to measure the time.
@@ -39,14 +38,14 @@
 "     * erapsed             : The function to check the erapsed time from zerotime substituting losstime.
 "     * stop                : The function to stop the measurement.
 "   []basket                : The list holding information and histories for the action.
-"     {}stuffs
+"     {}stuff
 "       []buns              : [Linked from act.buns] The list consisted of two strings to add to/replace the edges.
 "       - state             : 0 or 1. If it is called by keymapping, it is 1. If it is called by dot command, it is 0.
 "       - a_or_i            : 'a' or 'i'. It means 'a sandwich' or 'inner sandwich'. See :help text-objects.
-"       - mode              : 'o' or 'x'. Which mode the keymapping is called.
+"       - mode              : 'o' or 'x' or 'n'. Which mode the keymapping is called.
 "       - visualmode        : If the textobject is called in blockwise visual mode, then '<C-v>'. Otherwise 'v'.
 "       - syntax            : The place to put the name of displayed syntax for skipping in search.
-"       - evaluated         : If the buns are evaluated by opt.integrated.eval feature, then 1.
+"       - evaluated         : If the buns are evaluated by opt.integrated.expr feature, then 1.
 "       []cursor            : Linked to textobj.cursor.
 "       {}clock             : Linked to textobj.clock.
 "       {}coord
@@ -68,20 +67,20 @@
 "       {}opt               : [Linked from act.opt]
 "         - filter          : A strings for integrate() function to filter out redundant options.
 "         {}default         : Linked to textobj.opt.default.
-"         {}prime           : Linked to textobj.opt.prime.
+"         {}arg             : Linked to textobj.opt.arg.
 "         {}recipe          : The copy of a snippet of recipe. But 'buns' is removed.
 "           * clear         : The function to clear the containts.
 "           * update        : The function to update the containts.
 "         {}integrated      : The integrated options which is used in practical use.
 "           * clear         : The function to clear the containts.
 "           * update        : The function to update the containts.
-"         * integrate       : The function that integrates three options (prime, recipe, default) to get 'integrated'.
+"         * integrate       : The function that integrates three options (arg, recipe, default) to get 'integrated'.
 "     * search_with_nest    : The function to search the candidate in the range with nesting structure.
 "     * search_without_nest : The function to search the candidate in the range without nesting structure.
 "     * searchpos           : The wrap function of searchpos() for search_without_nest.
 "     * skip                : The function to judge whether skip the candidate or not in search.
 "     * get_buns            : The function to return the buns which are actually used.
-"   []candidates            : The copies of candidate stuffs.
+"   []candidates            : The copies of candidate stuff.
 "   * query                 : The function to ask user to input.
 "   * start                 : The function to start operation.
 "   * initialize            : The function to initialize.
@@ -90,9 +89,7 @@
 "}}}
 
 " variables "{{{
-let s:type_num    = type(0)
-let s:type_str    = type('')
-let s:type_list   = type([])
+" null valiables
 let s:null_coord  = [0, 0]
 let s:null_2coord = {
       \   'head': copy(s:null_coord),
@@ -105,13 +102,13 @@ let s:null_4coord = {
       \   'inner_tail': copy(s:null_coord),
       \ }
 
-if v:version > 704 || (v:version == 704 && has('patch457'))
-  let s:cursorhold = "\<CursorHold>"
-else
-  let s:plug_cap = "\<Plug>"
-  let s:cursorhold = s:plug_cap[0:1] . '`'
-  unlet plug_cap
-endif
+" types
+let s:type_num    = type(0)
+let s:type_str    = type('')
+let s:type_list   = type([])
+
+" features
+let s:has_reltime_and_float = has('reltime') && has('float')
 "}}}
 
 """ Public funcs
@@ -131,8 +128,8 @@ function! textobj#sandwich#auto(mode, a_or_i, ...) abort  "{{{
   let textobj.count  = v:count1
   let textobj.cursor = getpos('.')[1:2]
   let textobj.view   = winsaveview()
-  let textobj.recipes.force = get(a:000, 1, [])
-  call textobj.opt.prime.update(get(a:000, 0, {}))
+  let textobj.recipes.arg = get(a:000, 1, [])
+  call textobj.opt.arg.update(get(a:000, 0, {}))
 
   return ":\<C-u>call textobj#sandwich#select()\<CR>"
 endfunction
@@ -153,10 +150,10 @@ function! textobj#sandwich#query(mode, a_or_i, ...) abort  "{{{
   let textobj.count  = v:count1
   let textobj.cursor = getpos('.')[1:2]
   let textobj.view   = winsaveview()
-  let textobj.recipes.force = get(a:000, 1, [])
+  let textobj.recipes.arg = get(a:000, 1, [])
   let textobj.opt.timeoutlen = s:get('timeoutlen', &timeoutlen)
   let textobj.opt.timeoutlen = textobj.opt.timeoutlen < 0 ? 0 : textobj.opt.timeoutlen
-  call textobj.opt.prime.update(get(a:000, 0, {}))
+  call textobj.opt.arg.update(get(a:000, 0, {}))
 
   " query
   call textobj.query()
@@ -181,58 +178,52 @@ endfunction
 
 
 " Objects
-" opt object  "{{{
-let s:opt = {}
-"}}}
-function! s:integrate_opt() dict abort  "{{{
+function! s:opt_integrate() dict abort  "{{{
   call self.integrated.clear()
   let default = filter(copy(self.default), self.filter)
   let recipe  = filter(copy(self.recipe),  self.filter)
-  let prime   = filter(copy(self.prime),   self.filter)
+  let arg     = filter(copy(self.arg),     self.filter)
   call extend(self.integrated, self.default, 'force')
   call extend(self.integrated, self.recipe,  'force')
-  call extend(self.integrated, self.prime,   'force')
+  call extend(self.integrated, self.arg,     'force')
 endfunction
 "}}}
-function! s:opt.clear() dict abort "{{{
+function! s:opt_clear() dict abort "{{{
   call filter(self, 'v:key ==# "clear" || v:key ==# "update" || v:key ==# "integrate"')
 endfunction
 "}}}
-function! s:opt.update(dict) dict abort "{{{
+function! s:opt_update(dict) dict abort "{{{
   call self.clear()
   call extend(self, a:dict, 'keep')
 endfunction
 "}}}
-
-" clock object  "{{{
-let s:clock = {
-      \   'started' : 0,
-      \   'paused'  : 0,
-      \   'losstime': 0,
-      \   'zerotime': reltime(),
-      \   'pause_at': reltime(),
+" opt object  "{{{
+let s:opt = {
+      \   'clear' : function('s:opt_clear'),
+      \   'update': function('s:opt_update'),
       \ }
 "}}}
-function! s:clock.start() dict abort  "{{{
+
+function! s:clock_start() dict abort  "{{{
   if self.started
     if self.paused
       let self.losstime += str2float(reltimestr(reltime(self.pause_at)))
       let self.paused = 0
     endif
   else
-    if has('reltime') && has('float')
+    if s:has_reltime_and_float
       let self.zerotime = reltime()
       let self.started  = 1
     endif
   endif
 endfunction
 "}}}
-function! s:clock.pause() dict abort "{{{
+function! s:clock_pause() dict abort "{{{
   let self.pause_at = reltime()
   let self.paused   = 1
 endfunction
 "}}}
-function! s:clock.erapsed() dict abort "{{{
+function! s:clock_erapsed() dict abort "{{{
   if self.started
     let total = str2float(reltimestr(reltime(self.zerotime)))
     return floor((total - self.losstime)*1000)
@@ -241,17 +232,27 @@ function! s:clock.erapsed() dict abort "{{{
   endif
 endfunction
 "}}}
-function! s:clock.stop() dict abort  "{{{
+function! s:clock_stop() dict abort  "{{{
   let self.started  = 0
   let self.paused   = 0
   let self.losstime = 0
 endfunction
 "}}}
-
-" coord object"{{{
-let s:coord = deepcopy(s:null_4coord)
+" clock object  "{{{
+let s:clock = {
+      \   'started' : 0,
+      \   'paused'  : 0,
+      \   'losstime': 0,
+      \   'zerotime': reltime(),
+      \   'pause_at': reltime(),
+      \   'start'   : function('s:clock_start'),
+      \   'pause'   : function('s:clock_pause'),
+      \   'erapsed' : function('s:clock_erapsed'),
+      \   'stop'    : function('s:clock_stop'),
+      \ }
 "}}}
-function! s:coord.get_inner(buns, cursor, opt) dict abort "{{{
+
+function! s:coord_get_inner(buns, cursor, opt) dict abort "{{{
   if a:opt.skip_break
     let virtualedit = &virtualedit
     let &virtualedit = ''
@@ -276,40 +277,19 @@ function! s:coord.get_inner(buns, cursor, opt) dict abort "{{{
   endif
 endfunction
 "}}}
-function! s:coord.next() dict abort  "{{{
+function! s:coord_next() dict abort  "{{{
   call cursor(self.head)
   normal! h
   let self.head = getpos('.')[1:2]
 endfunction
 "}}}
-
-" stuffs object "{{{
-let s:stuffs = {
-      \   'buns'    : [],
-      \   'external': [],
-      \   'searchby': '',
-      \   'state'   : 0,
-      \   'a_or_i'  : '',
-      \   'mode'    : '',
-      \   'cursor'  : copy(s:null_coord),
-      \   'coord'   : copy(s:coord),
-      \   'syntax'  : [],
-      \   'opt'     : {},
-      \   'clock'   : {},
-      \   'range'   : {
-      \     'valid' : 0,
-      \     'top'   : 0,
-      \     'bottom': 0,
-      \     'toplim': 0,
-      \     'botlim': 0,
-      \     'stride': &lines,
-      \     'count' : 1,
-      \   },
-      \   'escaped'  : 0,
-      \   'evaluated': 0,
-      \ }
+" coord object"{{{
+let s:coord = deepcopy(s:null_4coord)
+let s:coord.get_inner = function('s:coord_get_inner')
+let s:coord.next = function('s:coord_next')
 "}}}
-function! s:stuffs.search_with_nest(textobj) dict abort  "{{{
+
+function! s:search_with_nest(textobj) dict abort  "{{{
   let buns  = self.get_buns()
   let range = self.range
   let coord = self.coord
@@ -357,7 +337,7 @@ function! s:stuffs.search_with_nest(textobj) dict abort  "{{{
     " add to candidates
     if self.is_valid_candidate(a:textobj)
       let candidate = deepcopy(self)
-      " this is required for the case of 'eval' option is 2.
+      " this is required for the case of 'expr' option is 2.
       let candidate.buns[0:1] = buns
       let a:textobj.candidates += [candidate]
     endif
@@ -373,7 +353,7 @@ function! s:stuffs.search_with_nest(textobj) dict abort  "{{{
   call range.next()
 endfunction
 "}}}
-function! s:stuffs.search_without_nest(textobj) dict abort  "{{{
+function! s:search_without_nest(textobj) dict abort  "{{{
   let buns  = self.get_buns()
   let range = self.range
   let coord = self.coord
@@ -456,7 +436,7 @@ function! s:stuffs.search_without_nest(textobj) dict abort  "{{{
 
   if self.is_valid_candidate(a:textobj)
     let candidate = deepcopy(self)
-    " this is required for the case of 'eval' option is 2.
+    " this is required for the case of 'expr' option is 2.
     let candidate.buns[0:1] = buns
     let a:textobj.candidates += [candidate]
   endif
@@ -464,7 +444,7 @@ function! s:stuffs.search_without_nest(textobj) dict abort  "{{{
   let range.valid = 0
 endfunction
 "}}}
-function! s:stuffs.get_region(textobj) abort "{{{
+function! s:get_region(textobj) dict abort "{{{
   let range = self.range
   let coord = self.coord
   let opt   = self.opt.integrated
@@ -522,7 +502,7 @@ function! s:stuffs.get_region(textobj) abort "{{{
           let coord.inner_tail = inner_tail
 
           if self.is_valid_candidate(a:textobj)
-            let self.visualmode = self.a_or_i == 'a' ? motionwise_a : motionwise_i
+            let self.visualmode = self.a_or_i ==# 'a' ? motionwise_a : motionwise_i
             let a:textobj.candidates += [deepcopy(self)]
           endif
         else
@@ -546,7 +526,7 @@ function! s:stuffs.get_region(textobj) abort "{{{
   endtry
 endfunction
 "}}}
-function! s:stuffs.searchpos(pattern, flag, stopline, timeout, is_head) dict abort"{{{
+function! s:searchpos(pattern, flag, stopline, timeout, is_head) dict abort"{{{
   let flag = a:flag
   if a:pattern !=# ''
     let coord = searchpos(a:pattern, flag, a:stopline, a:timeout)
@@ -560,7 +540,7 @@ function! s:stuffs.searchpos(pattern, flag, stopline, timeout, is_head) dict abo
   return coord
 endfunction
 "}}}
-function! s:stuffs.skip(is_head, ...) dict abort  "{{{
+function! s:skip(is_head, ...) dict abort  "{{{
   let cursor = getpos('.')[1:2]
   let coord = a:0 > 0 ? a:1 : cursor
   let opt = self.opt.integrated
@@ -574,7 +554,7 @@ function! s:stuffs.skip(is_head, ...) dict abort  "{{{
     if opt.syntax != []
       let list = map(synstack(coord[0], coord[1]),
             \ 'synIDattr(synIDtrans(v:val), "name")')
-      if filter(copy(opt.syntax), 'match(list, v:val) > -1') == []
+      if !s:is_included_syntax(list, opt.syntax)
         return 1
       endif
     endif
@@ -607,7 +587,7 @@ function! s:stuffs.skip(is_head, ...) dict abort  "{{{
   return 0
 endfunction
 "}}}
-function! s:stuffs.is_valid_candidate(textobj) abort "{{{
+function! s:is_valid_candidate(textobj) dict abort "{{{
   let coord      = self.coord
   let opt        = self.opt.integrated
   let visualmark = self.visualmark
@@ -624,6 +604,7 @@ function! s:stuffs.is_valid_candidate(textobj) abort "{{{
   if self.mode !=# 'x'
     let visual_mode_affair = 1
   else
+    " self.visualmode ==# 'V' never comes.
     if self.visualmode ==# 'v'
       let visual_mode_affair = s:is_ahead(visualmark.head, head)
                           \ || s:is_ahead(tail, visualmark.tail)
@@ -645,8 +626,12 @@ function! s:stuffs.is_valid_candidate(textobj) abort "{{{
   if opt.match_syntax != 2
     let opt_match_syntax_affair = 1
   else
-    let opt_match_syntax_affair = s:is_matched_syntax(coord.inner_head, self.syntax)
-                             \ || s:is_matched_syntax(coord.inner_tail, self.syntax)
+    let synstack_inner_head = map(synstack(coord.inner_head[0], coord.inner_head[1]),
+          \ 'synIDattr(synIDtrans(v:val), "name")')
+    let synstack_inner_tail = map(synstack(coord.inner_tail[0], coord.inner_tail[1]),
+          \ 'synIDattr(synIDtrans(v:val), "name")')
+    let opt_match_syntax_affair = s:is_included_syntax(synstack_inner_head, self.syntax)
+                             \ || s:is_included_syntax(synstack_inner_tail, self.syntax)
   endif
 
   return s:is_equal_or_ahead(tail, head)
@@ -656,15 +641,15 @@ function! s:stuffs.is_valid_candidate(textobj) abort "{{{
         \ && opt_match_syntax_affair
 endfunction
 "}}}
-function! s:stuffs.get_buns() dict abort  "{{{
+function! s:get_buns() dict abort  "{{{
   let opt   = self.opt.integrated
   let buns  = self.buns
   let clock = self.clock
 
-  if (opt.eval && !self.evaluated) || opt.eval == 2
+  if (opt.expr && !self.evaluated) || opt.expr == 2
     call clock.pause()
     echo ''
-    let buns = opt.eval == 2 ? deepcopy(buns) : buns
+    let buns = opt.expr == 2 ? deepcopy(buns) : buns
     let buns[0] = eval(buns[0])
     if buns[0] !=# ''
       let buns[1] = eval(buns[1])
@@ -683,7 +668,7 @@ function! s:stuffs.get_buns() dict abort  "{{{
   return buns
 endfunction
 "}}}
-function! s:stuffs.range.next() dict abort  "{{{
+function! s:range_next() dict abort  "{{{
   if (self.top == 1/0 && self.bottom < 1)
         \ || (self.top <= self.toplim && self.bottom >= self.botlim)
     let self.top    = 1/0
@@ -701,35 +686,43 @@ function! s:stuffs.range.next() dict abort  "{{{
   endif
 endfunction
 "}}}
-
-" textobj object  "{{{
-let s:textobj = {
-      \   'state'     : 0,
-      \   'kind'      : '',
-      \   'a_or_i'    : 'i',
-      \   'mode'      : '',
-      \   'count'     : 0,
-      \   'cursor'    : copy(s:null_coord),
-      \   'view'      : {},
-      \   'recipes'   : {
-      \     'force'     : [],
-      \     'integrated': [],
+" stuff object "{{{
+let s:stuff = {
+      \   'buns'    : [],
+      \   'external': [],
+      \   'searchby': '',
+      \   'state'   : 0,
+      \   'a_or_i'  : '',
+      \   'mode'    : '',
+      \   'cursor'  : copy(s:null_coord),
+      \   'coord'   : copy(s:coord),
+      \   'syntax'  : [],
+      \   'opt'     : {},
+      \   'clock'   : {},
+      \   'range'   : {
+      \     'valid' : 0,
+      \     'top'   : 0,
+      \     'bottom': 0,
+      \     'toplim': 0,
+      \     'botlim': 0,
+      \     'stride': &lines,
+      \     'count' : 1,
+      \     'next'  : function('s:range_next'),
       \   },
-      \   'basket'    : [],
-      \   'candidates': [],
-      \   'visualmode': 'v',
-      \   'visualmark': copy(s:null_2coord),
-      \   'opt'       : {
-      \     'stimeoutlen': 0,
-      \     'prime'  : copy(s:opt),
-      \     'default': copy(s:opt),
-      \   },
-      \   'done'      : 0,
-      \   'clock'     : copy(s:clock),
+      \   'escaped'  : 0,
+      \   'evaluated': 0,
+      \   'search_with_nest': function('s:search_with_nest'),
+      \   'search_without_nest': function('s:search_without_nest'),
+      \   'get_region': function('s:get_region'),
+      \   'searchpos': function('s:searchpos'),
+      \   'skip': function('s:skip'),
+      \   'is_valid_candidate': function('s:is_valid_candidate'),
+      \   'get_buns': function('s:get_buns'),
       \ }
 "}}}
-function! s:textobj.query() dict abort  "{{{
-  call self.recipes.integrate(self.kind, self.mode)
+
+function! s:query() dict abort  "{{{
+  call self.recipes.integrate(self.kind, self.mode, self.opt.default)
   let recipes = deepcopy(self.recipes.integrated)
   let clock   = self.clock
   let timeoutlen = self.opt.timeoutlen
@@ -737,22 +730,20 @@ function! s:textobj.query() dict abort  "{{{
   " query phase
   let input   = ''
   let cmdline = []
+  let last_compl_match = ['', []]
   while recipes != []
     let c = getchar(0)
     if c == 0
       if clock.started && timeoutlen > 0 && clock.erapsed() > timeoutlen
-        let recipe = {'buns': []}
+        let [input, recipes] = last_compl_match
         break
       else
         sleep 20m
         continue
       endif
-    elseif c ==# s:cursorhold
-      continue
     endif
 
     let c = type(c) == s:type_num ? nr2char(c) : c
-    let _input = input
     let input .= c
 
     " check forward match
@@ -766,12 +757,11 @@ function! s:textobj.query() dict abort  "{{{
       else
         call clock.stop()
         call clock.start()
-        let _recipes = copy(recipes)
+        let last_compl_match = [input, copy(recipes)]
       endif
     else
       if clock.started && !n_fwd
-        let input = _input
-        let recipes = _recipes
+        let [input, recipes] = last_compl_match
         " FIXME: Additional keypress, 'c', is ignored now, but it should be pressed.
         "        The problem is feedkeys() cannot be used for here...
         break
@@ -784,10 +774,11 @@ function! s:textobj.query() dict abort  "{{{
   if filter(recipes, 's:is_input_matched(v:val, input, 1)') != []
     let recipe = recipes[0]
   else
-    if strlen(input) > 1 || input ==# "\<Esc>" || input ==# "\<C-c>"
+    if input ==# "\<Esc>" || input ==# "\<C-c>" || input ==# ''
       let recipe = {}
     else
-      let recipe = {'buns': [input, input]}
+      let c = split(input, '\zs')[0]
+      let recipe = {'buns': [c, c]}
     endif
   endif
 
@@ -798,7 +789,7 @@ function! s:textobj.query() dict abort  "{{{
   endif
 endfunction
 "}}}
-function! s:textobj.start() dict abort "{{{
+function! s:start() dict abort "{{{
   call self.initialize()
 
   let [virtualedit, whichwrap]   = [&virtualedit, &whichwrap]
@@ -811,7 +802,7 @@ function! s:textobj.start() dict abort "{{{
   endtry
 endfunction
 "}}}
-function! s:textobj.initialize() dict abort  "{{{
+function! s:initialize() dict abort  "{{{
   let self.count = !self.state && self.count != v:count1 ? v:count1 : self.count
   let self.done  = 0
 
@@ -821,53 +812,53 @@ function! s:textobj.initialize() dict abort  "{{{
   endif
 
   if self.state
-    if self.recipes.integrated == []
-      call self.recipes.integrate(self.kind, self.mode)
-    endif
-    let recipes = self.recipes.integrated
-
     let self.opt.stimeoutlen = s:get('stimeoutlen', 500)
     let self.opt.stimeoutlen = self.opt.stimeoutlen < 0 ? 0 : self.opt.stimeoutlen
     let self.opt.latestjump  = s:get('latest_jump', 1)
     let self.visualmode = self.mode ==# 'x' && visualmode() ==# "\<C-v>" ? "\<C-v>" : 'v'
     call self.opt.default.update(deepcopy(g:textobj#sandwich#options[self.kind]))
 
+    if self.recipes.integrated == []
+      call self.recipes.integrate(self.kind, self.mode, self.opt.default)
+    endif
+    let recipes = self.recipes.integrated
+
     " prepare basket
     for recipe in recipes
       let has_buns     = has_key(recipe, 'buns')
       let has_external = has_key(recipe, 'external')
       if has_buns || has_external
-        let stuffs = deepcopy(s:stuffs)
+        let stuff = deepcopy(s:stuff)
 
         if has_buns
-          let stuffs.buns     = remove(recipe, 'buns')
-          let stuffs.searchby = 'buns'
+          let stuff.buns     = remove(recipe, 'buns')
+          let stuff.searchby = 'buns'
         else
-          let stuffs.external = remove(recipe, 'external')
-          let stuffs.searchby = 'external'
+          let stuff.external = remove(recipe, 'external')
+          let stuff.searchby = 'external'
         endif
 
-        let stuffs.state  = self.state
-        let stuffs.a_or_i = self.a_or_i
-        let stuffs.mode   = self.mode
-        let stuffs.cursor = self.cursor
-        let stuffs.clock  = self.clock
-        let stuffs.evaluated  = 0
-        let stuffs.visualmode = self.visualmode
-        let stuffs.coord.head = copy(self.cursor)
-        let stuffs.visualmark = self.visualmark
+        let stuff.state  = self.state
+        let stuff.a_or_i = self.a_or_i
+        let stuff.mode   = self.mode
+        let stuff.cursor = self.cursor
+        let stuff.clock  = self.clock
+        let stuff.evaluated  = 0
+        let stuff.visualmode = self.visualmode
+        let stuff.coord.head = copy(self.cursor)
+        let stuff.visualmark = self.visualmark
 
-        let stuffs.opt     = copy(self.opt)
-        let opt            = stuffs.opt
+        let stuff.opt      = copy(self.opt)
+        let opt            = stuff.opt
         let opt.filter     = printf('v:key =~# ''\%%(%s\)''',
                 \ join(keys(s:default_opt[self.kind]), '\|'))
         let opt.recipe     = deepcopy(s:opt)
         let opt.integrated = deepcopy(s:opt)
-        let opt.integrate  = function('s:integrate_opt')
+        let opt.integrate  = function('s:opt_integrate')
         call opt.recipe.update(recipe)
         call opt.integrate()
 
-        let range        = stuffs.range
+        let range        = stuff.range
         let range.valid  = 1
         let range.top    = self.cursor[0]
         let range.bottom = self.cursor[0]
@@ -882,7 +873,7 @@ function! s:textobj.initialize() dict abort  "{{{
           let range.botlim = lineend
         endif
 
-        let self.basket += [stuffs]
+        let self.basket += [stuff]
       endif
     endfor
   else
@@ -890,16 +881,16 @@ function! s:textobj.initialize() dict abort  "{{{
     let self.view   = winsaveview()
 
     " prepare basket
-    for stuffs in self.basket
-      let stuffs.state  = self.state
-      let stuffs.cursor = self.cursor
-      let stuffs.coord.head = copy(self.cursor)
-      let stuffs.coord.tail = copy(s:null_coord)
-      let stuffs.coord.inner_head = copy(s:null_coord)
-      let stuffs.coord.inner_tail = copy(s:null_coord)
+    for stuff in self.basket
+      let stuff.state  = self.state
+      let stuff.cursor = self.cursor
+      let stuff.coord.head = copy(self.cursor)
+      let stuff.coord.tail = copy(s:null_coord)
+      let stuff.coord.inner_head = copy(s:null_coord)
+      let stuff.coord.inner_tail = copy(s:null_coord)
 
-      let opt          = stuffs.opt
-      let range        = stuffs.range
+      let opt          = stuff.opt
+      let range        = stuff.range
       let range.valid  = 1
       let range.top    = self.cursor[0]
       let range.bottom = self.cursor[0]
@@ -920,7 +911,7 @@ function! s:textobj.initialize() dict abort  "{{{
   let self.candidates = []
 endfunction
 "}}}
-function! s:textobj.select() dict abort  "{{{
+function! s:select() dict abort  "{{{
   let clock = self.clock
   let stimeoutlen = self.opt.stimeoutlen
 
@@ -929,17 +920,17 @@ function! s:textobj.select() dict abort  "{{{
 
   " gather candidate
   while filter(copy(self.basket), 'v:val.range.valid') != []
-    for stuffs in self.basket
-      if stuffs.searchby ==# 'buns'
-        if stuffs.opt.integrated.nesting
-          call stuffs.search_with_nest(self)
+    for stuff in self.basket
+      if stuff.searchby ==# 'buns'
+        if stuff.opt.integrated.nesting
+          call stuff.search_with_nest(self)
         else
-          call stuffs.search_without_nest(self)
+          call stuff.search_without_nest(self)
         endif
-      elseif stuffs.searchby ==# 'external'
-        call stuffs.get_region(self)
+      elseif stuff.searchby ==# 'external'
+        call stuff.get_region(self)
       else
-        let stuffs.range.valid = 0
+        let stuff.range.valid = 0
       endif
     endfor
 
@@ -1023,12 +1014,12 @@ function! s:textobj.select() dict abort  "{{{
   endif
 endfunction
 "}}}
-function! s:textobj.synchronize(recipe) abort "{{{
+function! s:synchronize(recipe) abort "{{{
   if exists('g:operator#sandwich#object')
         \ && &operatorfunc =~# '^operator#sandwich#\%(delete\|replace\)'
     let filter = 'v:key !=# "clear" && v:key !=# "update"'
     call filter(a:recipe, filter)
-    if has_key(a:recipe, 'kind')
+    if has_key(a:recipe, 'kind') && filter(copy(a:recipe.kind), 'v:val ==# "delete" || v:val ==# "replace"') == []
       let a:recipe.kind += ['delete', 'replace']
       let a:recipe.addition = 0
     endif
@@ -1036,9 +1027,7 @@ function! s:textobj.synchronize(recipe) abort "{{{
   endif
 endfunction
 "}}}
-function! s:textobj.finalize() dict abort "{{{
-  let self.state = 0
-
+function! s:finalize() dict abort "{{{
   if self.opt.latestjump
     call setpos("''", [0] + self.cursor + [0])
   endif
@@ -1046,12 +1035,19 @@ function! s:textobj.finalize() dict abort "{{{
   if !self.done
     call winrestview(self.view)
   endif
+
+  " flash echoing
+  if !self.state
+    echo ''
+  endif
+
+  let self.state = 0
 endfunction
 "}}}
-function! s:textobj.recipes.integrate(kind, mode) dict abort  "{{{
+function! s:recipes_integrate(kind, mode, opt) dict abort  "{{{
   let self.integrated  = []
-  if self.force != []
-    let self.integrated += self.force
+  if self.arg != []
+    let self.integrated += self.arg
   else
     let self.integrated += sandwich#get_recipes()
     let self.integrated += textobj#sandwich#get_recipes()
@@ -1059,10 +1055,58 @@ function! s:textobj.recipes.integrate(kind, mode) dict abort  "{{{
   let filter = 's:has_filetype(v:val)
            \ && s:has_kind(v:val, a:kind)
            \ && s:has_mode(v:val, a:mode)
-           \ && s:has_operator(v:val)'
+           \ && s:expr_filter(v:val)'
   call filter(self.integrated, filter)
   call reverse(self.integrated)
+
+  " uniq by buns
+  if a:kind ==# 'auto'
+    let recipes = copy(self.integrated)
+    let self.integrated = []
+    while recipes != []
+      let recipe = remove(recipes, 0)
+      let self.integrated += [recipe]
+      if has_key(recipe, 'buns')
+        call filter(recipes, '!s:is_duplicated_buns(recipe, v:val, a:opt)')
+      elseif has_key(recipe, 'external')
+        call filter(recipes, '!s:is_duplicated_external(recipe, v:val, a:opt)')
+      endif
+    endwhile
+  endif
 endfunction
+"}}}
+" textobj object  "{{{
+let s:textobj = {
+      \   'state'     : 0,
+      \   'kind'      : '',
+      \   'a_or_i'    : 'i',
+      \   'mode'      : '',
+      \   'count'     : 0,
+      \   'cursor'    : copy(s:null_coord),
+      \   'view'      : {},
+      \   'recipes'   : {
+      \     'arg'       : [],
+      \     'integrated': [],
+      \     'integrate' : function('s:recipes_integrate'),
+      \   },
+      \   'basket'    : [],
+      \   'candidates': [],
+      \   'visualmode': 'v',
+      \   'visualmark': copy(s:null_2coord),
+      \   'opt'       : {
+      \     'stimeoutlen': 0,
+      \     'arg'    : copy(s:opt),
+      \     'default': copy(s:opt),
+      \   },
+      \   'done'      : 0,
+      \   'clock'     : copy(s:clock),
+      \   'query'     : function('s:query'),
+      \   'start'     : function('s:start'),
+      \   'initialize': function('s:initialize'),
+      \   'select'    : function('s:select'),
+      \   'synchronize': function('s:synchronize'),
+      \   'finalize'  : function('s:finalize'),
+      \ }
 "}}}
 
 """ Private funcs
@@ -1089,18 +1133,56 @@ function! s:has_mode(candidate, mode) abort "{{{
   if !has_key(a:candidate, 'mode')
     return 1
   else
-    return stridx(a:candidate['mode'], a:mode) > -1
+    return stridx(join(a:candidate['mode'], ''), a:mode) > -1
   endif
 endfunction
 "}}}
-function! s:has_operator(candidate) abort "{{{
-  if !has_key(a:candidate, 'operator')
+function! s:expr_filter(candidate) abort  "{{{
+  if !has_key(a:candidate, 'expr_filter')
     return 1
   else
-    let filter = 'type(v:val) == s:type_str ? v:val ==# v:operator :
-                \ type(v:val) == s:type_list ? v:val[0] ==# v:operator && v:val[1] ==# v:operatorfunc : 0'
-    return filter(copy(a:candidate.operator), filter) != []
+    for filter in a:candidate['expr_filter']
+      if !eval(filter)
+        return 0
+      endif
+    endfor
+    return 1
   endif
+endfunction
+"}}}
+function! s:is_duplicated_buns(recipe, item, opt) abort  "{{{
+  if has_key(a:item, 'buns')
+        \ && a:recipe['buns'][0] ==# a:item['buns'][0]
+        \ && a:recipe['buns'][1] ==# a:item['buns'][1]
+    let regex_r   = get(a:recipe, 'regex',   a:opt.regex)
+    let regex_i   = get(a:item,   'regex',   a:opt.regex)
+    let expr_r    = get(a:recipe, 'expr',    a:opt.expr)
+    let expr_i    = get(a:item,   'expr',    a:opt.expr)
+
+    let expr_r = expr_r ? 1 : 0
+    let expr_i = expr_i ? 1 : 0
+
+    if regex_r == regex_i && expr_r == expr_i
+      return 1
+    endif
+  endif
+
+  return 0
+endfunction
+"}}}
+function! s:is_duplicated_external(recipe, item, opt) abort "{{{
+  if has_key(a:item, 'external')
+        \ && a:recipe['external'][0] ==# a:item['external'][0]
+        \ && a:recipe['external'][1] ==# a:item['external'][1]
+    let noremap_r = get(a:recipe, 'noremap', a:opt.noremap)
+    let noremap_i = get(a:item,   'noremap', a:opt.noremap)
+
+    if noremap_r == noremap_i
+      return 1
+    endif
+  endif
+
+  return 0
 endfunction
 "}}}
 function! s:get(name, default) abort  "{{{
@@ -1141,6 +1223,20 @@ function! s:is_matched_syntax(coord, syntaxID) abort  "{{{
   else
     return [synIDattr(synIDtrans(synID(a:coord[0], a:coord[1], 1)), 'name')]
           \ == a:syntaxID
+  endif
+endfunction
+"}}}
+function! s:is_included_syntax(synstack, syntaxID) abort  "{{{
+  if a:syntaxID == []
+    return 1
+  elseif a:synstack == []
+    if a:syntaxID == ['']
+      return 1
+    else
+      return 0
+    endif
+  else
+    return filter(copy(a:syntaxID), 'match(a:synstack, v:val) > -1') != []
   endif
 endfunction
 "}}}
@@ -1215,7 +1311,7 @@ if exists('g:textobj#sandwich#default_recipes')
   unlockvar! g:textobj#sandwich#default_recipes
 endif
 let g:textobj#sandwich#default_recipes = [
-      \   {'buns': ['input("textobj-sandwich:head: ")', 'input("textobj-sandwich:tail: ")'], 'kind': ['query'], 'eval': 1, 'regex': 1, 'synchro': 1, 'input': ['f']},
+      \   {'buns': ['input("textobj-sandwich:head: ")', 'input("textobj-sandwich:tail: ")'], 'kind': ['query'], 'expr': 1, 'regex': 1, 'synchro': 1, 'input': ['i']},
       \ ]
 lockvar! g:textobj#sandwich#default_recipes
 "}}}
@@ -1223,7 +1319,7 @@ lockvar! g:textobj#sandwich#default_recipes
 " options "{{{
 let s:default_opt = {}
 let s:default_opt.auto = {
-      \   'eval'         : 0,
+      \   'expr'         : 0,
       \   'regex'        : 0,
       \   'skip_regex'   : [],
       \   'quoteescape'  : 0,
@@ -1236,7 +1332,7 @@ let s:default_opt.auto = {
       \   'skip_break'   : 0,
       \ }
 let s:default_opt.query = {
-      \   'eval'         : 0,
+      \   'expr'         : 0,
       \   'regex'        : 0,
       \   'skip_regex'   : [],
       \   'quoteescape'  : 0,

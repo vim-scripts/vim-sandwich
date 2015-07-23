@@ -1,4 +1,4 @@
-*operator-sandwich.jax*	日本語ヘルプ	Last change:23-May-2015.
+*operator-sandwich.jax*	日本語ヘルプ	Last change:23-Jul-2015.
 
 “挟まれた”テキストを編集するためのオペレータです。
 
@@ -26,6 +26,8 @@ CONFIGURATION			|operator-sandwich-configuration|
     kind
     motionwise
     mode
+    action
+    expr_filter
   LOCAL OPTIONS
     cursor
     highlight
@@ -34,10 +36,16 @@ CONFIGURATION			|operator-sandwich-configuration|
     linewise
     command
     query_once
-    eval
+    expr
+    autoindent
+    indentkeys
+    indentkeys+
+    indentkeys-
     regex
     skip_char
   GLOBAL OPTIONS
+    timeoutlen			|g:operator#sandwich#timeoutlen|
+    highlight_duration		|g:operator#sandwich#highlight_duration|
 HIGHLIGHT GROUP			|operator-sandwich-highlight-group|
 AUTOCOMMANDS			|operator-sandwich-autocommands|
 MISCELLANEOUS			|operator-sandwich-miscellaneous|
@@ -46,6 +54,7 @@ MISCELLANEOUS			|operator-sandwich-miscellaneous|
   matchit.vim のハイライトがかぶって邪魔
   文字列を囲むオペレータの文字指向の場合だけ空白をスキップしないのはなぜ？
   なぜ囲みを外す/置換するオペレータのキーマッピングはデフォルトで提供されない?
+  ドットコマンドでもカーソル位置を保存・復元したい
 
 ==============================================================================
 TL;DR
@@ -165,26 +174,26 @@ sa( と入力します
 <
 sa( と入力します。
 >
-	a
-	bb
-	ccc
-	(dddd)
-<
-この場合四桁目まで到達している行のみ処理の対象とします。もし、短い行も処理の対
-象としたい場合には矩形ビジュアルモードで |$| コマンドで全ての行末まで選択を拡
-張した状態にするとよいでしょう。
->
-	a
-	bb
-	ccc
-	dddd
-<
-最初の行にカーソルを置き、 <C-v>3j$sa( とキー入力します。
->
 	(a)
 	(bb)
 	(ccc)
 	(dddd)
+<
+この場合、すべての行に対し行末までを範囲として処理します。選択最終行が最も長い
+行でない場合は |$| コマンドで全ての行末まで選択を拡張した状態にするとよいでし
+ょう。
+>
+	aaaa
+	bbb
+	cc
+	d
+<
+最初の行にカーソルを置き、 <C-v>3j$sa( とキー入力します。
+>
+	(aaaa)
+	(bbb)
+	(cc)
+	(d)
 <
 
 
@@ -245,6 +254,21 @@ NOTE: 誤操作を防ぐため以下の設定を vimrc に追加することを�
 
 
 
+query-1st 系列キーマッピング~
+<Plug>(operator-sandwich-add-query1st)
+	テキストを括弧などで囲むためのオペレータコマンドです。[count] が与えら
+	れた場合、その数だけ囲みを追加します。|<Plug>(operator-sandwich-add)|
+	とは違い、 {motion/textobject} の入力の前に挿入する文字の決定を行いま
+	す。
+
+<Plug>(operator-sandwich-replace-query1st)
+	テキストの囲みを置き換えるためのオペレータコマンドです。 [count] が与
+	えられた場合、その数だけ連続する囲みを置換します。
+	|<Plug>(operator-sandwich-replace)|とは違い、 {motion/textobject} の入
+	力の前に挿入する文字の決定を行います。
+
+
+
 補助キーマッピング~
 
 カウントの取り扱いに関して、補助的な働きをするキーマッピングが二つ用意されてい
@@ -257,11 +281,11 @@ NOTE: 誤操作を防ぐため以下の設定を vimrc に追加することを�
 	オペレータに与えられた [count] と同じカウントを続く
 	{motion}/{textobject} に与えるためのキーマッピングです。
 >
- nnoremap sd(
+ nmap sd(
  \ <Plug>(operator-sandwich-delete)<Plug>(operator-sandwich-synchro-count)a(
 <
-このキーマッピングでは 2sd( は 2<Plug>(operator-sandwich-delete)2a( に等しくな
-ります。
+	このキーマッピングでは 2sd( は 2<Plug>(operator-sandwich-delete)2a( に
+	等しくなります。
 
 
 
@@ -270,11 +294,114 @@ NOTE: 誤操作を防ぐため以下の設定を vimrc に追加することを�
 	与えられたカウントをオペレータで使わずに続く {motion}/{textobject} に
 	与えるためのキーマッピングです。
 >
- nnoremap sd(
+ nmap sd(
  \ <Plug>(operator-sandwich-delete)<Plug>(operator-sandwich-release-count)a(
 <
-このキーマッピングでは 2sd( は <Plug>(operator-sandwich-delete)2a( に等しくな
-ります。
+	このキーマッピングでは 2sd( は <Plug>(operator-sandwich-delete)2a( に
+	等しくなります。
+
+
+
+ドットコマンドを便利にする補助的なキーマッピングが二種あります。これらは local
+option の "cursor" に関係しており、このオプションの選択肢 "keep" を |.| コマン
+ドリピート時にも有効にするために使われます。カーソル位置を編集後にも保つための
+このオプションはデフォルトでは |.| コマンドリピート時には有効にならないのです
+が、以下のどちらかのキーマッピングを使用することで有効にすることができます。他
+のプラグインとキーマッピングが衝突する恐れがあるので、環境によって適切なほうを
+使用してください。 |operator-sandwich-configuration| の local option 中 cursor
+オプションの項もご覧ください。
+
+				*<Plug>(operator-sandwich-predot)*
+<Plug>(operator-sandwich-predot)
+	このキーマッピングは local option "cursor" の "keep" を |.| コマンドで
+	も有効にするために使われます。このキーマッピング自体は |.| キーを送ら
+	ないので、 |.| キーシークエンスを送るマッピングに先駆けるようにマップ
+	してください。 |.| キーにマップするような他のプラグイン、例えば
+	repeat.vim (vimscript #2136) をお使いの場合に使います。次の行を vimrc
+	に追加してください。
+>
+	nmap . <Plug>(operator-sandwich-predot)<Plug>(RepeatDot)
+<
+
+				*<Plug>(operator-sandwich-dot)*
+<Plug>(operator-sandwich-dot)
+	このキーマッピングは local option "cursor" の "keep" を |.| コマンドで
+	も有効にするために使われます。このキーマッピング自体が |.| キーを送る
+	ので、 |.| キーにマップするようなプラグインをお使いでなければこちらを
+	使用してください。次の行を vimrc に追加します。
+>
+	nmap . <Plug>(operator-sandwich-dot)
+<
+
+
+
+キーマッピング関数~
+
+ユーザーは新しいキーマッピングを定義するのに以下の関数を使うこともできます。
+
+					*operator#sandwich#keymap()*
+operator#sandwich#keymap(kind, mode[, options[, recipes]])
+	この関数はオペレータのキーマッピングを定義するのにつかわれます。
+>
+	nnoremap <silent> sa <Esc>:call operator#sandwich#keymap('add', 'n')<CR>
+	xnoremap <silent> sa <Esc>:call operator#sandwich#keymap('add', 'x')<CR>
+<
+	もし空でない辞書変数が省略可能な第三引数に与えられた場合、辞書に含まれ
+	る local option はそのキーマッピングで使われるオプションのデフォルト値
+	を上書きします。ただし、 motionwise に依って設定することはここではでき
+	ません。
+>
+	" example 1
+	nnoremap <silent> sa
+	\ <Esc>:call operator#sandwich#keymap(
+	\ 'add',
+	\ 'n',
+	\ {'highlight': 0}
+	\ )<CR>
+
+	" example 2
+	let g:sandwich_alt_options = {'highlight': 0}
+	nnoremap <silent> sa
+	\ <Esc>:call operator#sandwich#keymap(
+	\ 'add',
+	\ 'n',
+	\ g:sandwich_alt_options
+	\ )<CR>
+<
+
+	空でないレシピのリストが省略可能な第四引数に与えられた場合、そのキーマ
+	ッピングは |sandwich#recipes| (|sandwich#default_recipes|) や
+	|operator#sandwich#recipes| (|operator#sandwich#default_recipes|) のか
+	わりに引数に与えられたリストを参照します。
+>
+	" example 1
+	nnoremap <silent> sa
+	\ <Esc>:call operator#sandwich#keymap(
+	\ 'add',
+	\ 'n',
+	\ {},
+	\ [{'buns': ['(', ')']}]
+	\ )<CR>
+
+	" example 2
+	let g:sandwich_alt_recipes = [{'buns': ['(', ')']}]
+	nnoremap <silent> sa
+	\ <Esc>:call operator#sandwich#keymap(
+	\ 'add',
+	\ 'n',
+	\ {},
+	\ g:sandwich_alt_recipes
+	\ )<CR>
+<
+
+
+
+					*operator#sandwich#query1st()*
+operator#sandwich#query1st(kind, mode[, options[, recipes]])
+	この関数は |operator#sandwich#keymap()| と同様の関数ですが、
+	|<Plug>(operator-sandwich-add-query1st)| や
+	|<Plug>(operator-sandwich-replace-query1st)| などの query1st 系列の
+	キーマッピングを定義するのに使われます。
 
 
 
@@ -540,6 +667,50 @@ mode
 
 
 
+action
+	編集方法の種類によってレシピを選別するフィルターです。すべてのオペレー
+	タの動作は、追加 "add" と削除 "delete" の二つの編集方法に分けることが
+	できます。文字列を囲むオペレータは "add" のみ、囲みを外すオペレータは
+	"delete" のみ、置換するオペレータは "delete" のち "add" をすることによ
+	り置換しています。このフィルターはそれぞれの編集において使われる機会を
+	制限します。使用可能な名前は "add", "delete", "all" です。レシピが
+	"action" キーを持たなければすべての編集操作において有効になります。
+>
+	" The recipe is valid only in add actions
+	let g:sandwich#recipes += [
+	  \    {'buns': ['"""', '"""'], 'action': ['add'], 'input': ['"']}
+	  \  ]
+<
+
+
+
+expr_filter
+	ユーザーがフィルターを自作して使うことができます。リストの要素は式
+	|expression| として評価され、評価値が真 (1) の場合にはそのレシピは有効
+	となり、評価値が偽 (0) の場合にはレシピは無効となります。
+>
+	" A filter should be defined in somewhere, for example in your vimrc.
+	function! FilterValid()
+	    return 1
+	endfunction
+
+	function! FilterInvalid()
+	    return 0
+	endfunction
+
+	" This recipe is valid
+	let g:sandwich#recipes += [
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterValid()']}
+	  \  ]
+
+	" This recipe is invalid
+	let g:sandwich#recipes += [
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterInvalid()']}
+	  \  ]
+<
+
+
+
 Local option~
 
 local option はレシピごとに細かく挙動を調整するために設定されます。もし指定の
@@ -586,10 +757,13 @@ g:operator#sandwich#options		*g:operator#sandwich#options*
 	    - linewise			(for all kinds)
 	    - command			(for all kinds)
 	    - query_once		(for add and replace)
-	    - eval			(for add and replace)
+	    - expr			(for add and replace)
+	    - autoindent		(for add and replace)
+	    - indentkeys		(for add and replace)
+	    - indentkeys-		(for add and replace)
+	    - indentkeys+		(for add and replace)
 	    - regex			(for delete and replace)
 	    - skip_char			(for delete and replace)
-	    - highlight_duration	(for delete)
 
 
 
@@ -610,11 +784,11 @@ operator#sandwich#set_default()		*operator#sandwich#set_default()*
 
 cursor
 	オペレータが編集後のカーソル位置を指定するオプションです。
-	"innner_head", "keep", "inner_tail", "front", "end" が使用可能です。
+	"innner_head", "keep", "inner_tail", "head", "tail" が使用可能です。
 	  inner_head: 囲みの内側の文字列の先頭
 	  keep      : 処理開始時のカーソル位置をできる限り復元する
 	  inner_tail: 囲みの内側の文字列の末尾
-	  front     : 前方の囲みの先頭
+	  head      : 前方の囲みの先頭
 	  tail      : 後方の囲みの末尾
 >
          #                 : cursor
@@ -627,13 +801,16 @@ cursor
                        #   : keep
 	             (foo)
 
-                     #     : front
+                     #     : head
 	             (foo)
-                         # : end
+                         # : tail
 <
 	NOTE: 残念ながら "keep" オプションは |.| コマンドでの繰り返しの際に
-	      カーソル位置を復元できません。自動的に "inner_head" へフォール
-	      バックします。
+	      デフォルトではカーソル位置を復元できません。自動的に
+	      "inner_head" へフォールバックします。必要であれば補助キーマッピ
+	      ング |<Plug>(operator-sandwich-predot)| か
+	      |<Plug>(operator-sandwich-dot)| を |.| キーにマッピングすること
+	      でこの機能を有効にすることができます。
 
 	デフォルト値
 	  * add
@@ -685,8 +862,8 @@ highlight
 
 
 skip_space
-	値が真なら、指定された文字列の両端がスペースであった場合にこれらをスキ
-	ップします。
+	値が 1 なら、指定された文字列の両端がスペースであった場合にこれらをス
+	キップします。
 >
 	let g:sandwich#recipes += [
 	  \   {'buns': ['(', ')'], 'skip_space': 0}
@@ -710,6 +887,7 @@ skip_space
 	" Press sda"
 	"   ?"foo"   --->  ?foo    : ? is space
 <
+	両端が空白の場合にもこれをスキップするためには値を 2 にします。
 
 	デフォルト値
 	  * add
@@ -718,11 +896,11 @@ skip_space
 	    - block: 1
 	  * delete
 	    - char : 1
-	    - line : 1
+	    - line : 2
 	    - block: 1
 	  * replace
 	    - char : 1
-	    - line : 1
+	    - line : 2
 	    - block: 1
 
 
@@ -826,21 +1004,21 @@ linewise
 	    - block: 0
 	  * replace
 	    - char : 0
-	    - line : 1
+	    - line : 0
 	    - block: 0
 
 
 
 command
-	オペレータ処理後に実行されるコマンドのリストです。コマンド実行の前に一
-	時的に |'[| と |']| の二つのマークが囲みの内側のテキストの先頭と末尾に
-	設定されます。
+	オペレータ処理後に実行されるコマンドのリストです。 |'[| と |']| の二つ
+	のマークが編集した位置の先頭と末尾へ設定されるので、これを使うと便利で
+	しょう。
 >
 	let g:sandwich#recipes += [
 	  \    {
 	  \      'buns'    : ['{', '}'],
 	  \      'linewise': 1,
-	  \      'command' : ["'[,']normal! >>"]
+	  \      'command' : ["'[+1,']-1normal! >>"]
 	  \    },
 	  \ ]
 	" Press saiw{
@@ -882,7 +1060,7 @@ query_once
 
 
 
-eval
+expr
 	このオプションの値が 1 か 2 なら "buns" は式として評価されてから挿入さ
 	れます。値が 1 の場合は一度だけ評価され、|.| コマンドでは同じものが使
 	用されます。値が 2 の場合は |.| コマンドで繰り返される毎に評価されます
@@ -890,8 +1068,37 @@ eval
 	します。 (参考: |let-@|)
 >
 	let g:sandwich#recipes += [
-	  \   {'buns': ['@@', '@@'], 'eval': 1, 'input': ['@']}
+	  \   {'buns': ['@@', '@@'], 'expr': 1, 'input': ['@']}
 	  \ ]
+<
+	NOTE: もし式が |getchar()| や |input()| でユーザーに入力を求める場合、
+	      |operator-sandwich| の囲みを外すオペレータや |textobj-sandwich|
+	      の |<Plug>(textobj-sandwich-auto-i)| や
+	      |<Plug>(textobj-sandwich-auto-a)| で不都合が出ることがあります。
+	      この問題を避けるために、 "kind" フィルター及び "action" フィルタ
+	      ーを併用することが推奨されます。例えば次のレシピは html スタイル
+	      のタグで囲むことを目的として、タグ名の入力をユーザーに求めます。
+>
+	let g:operator#sandwich#recipes += [
+	  \   {
+	  \     'buns'    : ['TagInput(1)', 'TagInput(0)'],
+	  \     'expr'    : 1,
+	  \     'filetype': ['html'],
+	  \     'kind'    : ['add', 'replace'],
+	  \     'action'  : ['add'],
+	  \     'input'   : ['t'],
+	  \   },
+	  \ ]
+
+	function! TagInput(is_head) abort
+	  if a:is_head
+	    let s:TagLast = input('Tag: ')
+	    let tag = printf('<%s>', s:TagLast)
+	  else
+	    let tag = printf('</%s>', matchstr(s:TagLast, '^\a[^[:blank:]>/]*'))
+	  endif
+	  return tag
+	endfunction
 <
 	デフォルト値
 	  * add
@@ -902,6 +1109,98 @@ eval
 	    - char : 0
 	    - line : 0
 	    - block: 0
+
+
+
+autoindent
+	このオプションはオペレーターによる編集中の自動インデント機能を指定する
+	のにつかわれます。値には整数を指定します。1～3の整数にそれぞれ vim の
+	オプション 'autoindent', 'smartindent', 'cindent' が対応しています。値
+	が 0 の場合はすべての自動インデント機能を停止します。値が負数の場合は
+	設定を変更せず、現行の設定をそのまま使います。もし vim の 'indentexpr'
+	オプションを使用したい場合には負数を指定するとよいでしょう。
+
+	  * -n : 設定を変更しない ('indentexpr' が空でなければそれが使われる)
+	  *  0 : 'noautoindent', 'nosmartindent', 'nocindent', 'noindentexpr'
+	  *  1 : 'autoindent'
+	  *  2 : 'smartindent'
+	  *  3 : 'cindent'
+
+	"buns" が改行を含む場合にはこのオプションについて考える必要があるかも
+	しれません。実用的にはほとんどの場合 1 ('autoindent') を指定するのがよ
+	い選択でしょう。少なくとも予期せぬ結果を招くことは少ないと思われます。
+	その他の選択については注意深くご使用ください。
+>
+	let g:sandwich#recipes += [
+	  \   {'buns': ['{', '}'], 'motionwise': ['line'], 'autoindent': 3},
+	  \ ]
+<
+	Default values
+	  * add
+	    - char : 1
+	    - line : 1
+	    - block: 1
+	  * replace
+	    - char : 1
+	    - line : 1
+	    - block: 1
+
+
+
+indentkeys
+indentkeys+
+indentkeys-
+	これらのオプションはオペレーター編集中に vim のオプション 'indentkeys'
+	あるいは 'cinkeys' オプションの値を指定するためのオプションです。書式
+	は 'cinkeys' オプションと同様です。"indentkeys" オプションの値は
+				|:set| indentkeys={value}
+	の {value} のように設定されます。同じように "indentkeys+",
+	"indentkeys-" オプションの値はそれぞれ、
+	                        |:set| indentkeys+={value}
+	                        |:set| indentkeys-={value}
+	{value} のように設定されます。ただし一点だけ違いがあり、
+	|:set| indentkeys-={value} の場合は、次のようにその順番に処理が依存し
+	ます。
+>
+	:set indentkeys?    " -> 0{,0},:,0#,!^F,o,O,e
+	:set indentkeys-=0},0{
+	:set indentkeys?    " -> 0{,0},:,0#,!^F,o,O,e
+
+	" '0{' and '0}' は取り除かれていない、
+	" なぜなら '0},0{' という文字列は 'indentkeys' の中にないからである。
+
+	:set indentkeys-=0}
+	:set indentkeys?    " -> 0{,:,0#,!^F,o,O,e
+	:set indentkeys-=0{
+	:set indentkeys?    " -> :,0#,!^F,o,O,e
+<
+	これに対し "indentkeys-" オプションの場合は順番を気にする必要はありま
+	せん。単純にコンマ区切りで列挙してください。
+>
+	let g:sandwich#recipes += [
+	  \   {'buns': ['[', ']'], 'filetype': ['tex'], 'indentkeys-': '[,]'}
+	  \ ]
+
+	" This is same as the above
+	"let g:sandwich#recipes += [
+	"  \   {'buns': ['[', ']'], 'filetype': ['tex'], 'indentkeys-': '],['}
+	"  \ ]
+<
+	もし、 'indentexpr' オプションが空で 'cindent' が有効なら自動的に
+	'cinkeys' へ処理が切り替わります。
+
+	処理される順番は "indentkeys" -> "indentkeys+" -> "indentkeys-" のよう
+	になっています。
+
+	Default values
+	  * add
+	    - char : ''
+	    - line : ''
+	    - block: ''
+	  * replace
+	    - char : ''
+	    - line : ''
+	    - block: ''
 
 
 
@@ -987,15 +1286,16 @@ g:operator#sandwich#highlight_duration
 	\        'input("operator-sandwich:head: ")',
 	\        'input("operator-sandwich:tail: ")'
 	\    ],
-	\    'kind': ['add', 'replace'],
-	\    'eval': 1,
-	\    'input': ['f']
+	\    'kind'  : ['add', 'replace'],
+	\    'action': ['add']
+	\    'expr'  : 1,
+	\    'input' : ['i']
 	\ },
 <
 一つ一つの要素の意味は上で説明されています。重要なのはこのレシピが f という
 input によって発火することと、その機能によりインスタントなレシピが定義できるこ
 とです。このように使います。まず、このレシピを呼びましょう、例えばカーソルを
-bar という文字列に合わせ saiwf と入力します。
+bar という文字列に合わせ saiwi と入力します。
 >
 	bar
 <
@@ -1132,6 +1432,27 @@ matchit.vim のハイライトがかぶって邪魔~
 	ことができますので興味があれば試してみてください。
 	|<Plug>(operator-sandwich-delete)|
 	|<Plug>(operator-sandwich-replace)|
+
+
+
+ドットコマンドでもカーソル位置を保存・復元したい~
+	local option "cursor" の "keep" はデフォルトでは |.| コマンドリピート
+	では有効ではありません。しかし必要であれば、
+	|<Plug>(operator-sandwich-predot)| か |<Plug>(operator-sandwich-dot)|
+	を |.| キーにマッピングすることでこの機能を有効にすることができます。
+	もし他に |.| コマンドにマップするようなプラグインをご使用の場合は
+	|<Plug>(operator-sandwich-predot)| を使います。例えば repeat.vim
+	(vimscript #2136) をご使用の場合は次の行を vimrc へ追加します。
+>
+	nmap . <Plug>(operator-sandwich-predot)<Plug>(RepeatDot)
+<
+	そのようなプラグインを使ってない場合は |<Plug>(operator-sandwich-dot)|
+	を使います。
+>
+	nmap . <Plug>(operator-sandwich-dot)
+<
+	|<Plug>(operator-sandwich-predot)| 及び
+	|<Plug>(operator-sandwich-dot)| それぞれの詳しい説明もご覧ください。
 
 
 

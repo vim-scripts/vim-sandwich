@@ -1,4 +1,4 @@
-*textobj-sandwich.txt*			Last change:23-May-2015.
+*textobj-sandwich.txt*			Last change:23-Jul-2015.
 
 The textobject plugin to search and select sandwiched textobjects.
 
@@ -32,13 +32,16 @@ CONFIGURATION			|textobj-sandwich-configuration|
     regex
     skip_regex
     quoteescape
-    eval
+    expr
     synchro
     noremap
     syntax
     match_syntax
     skip_breaking
   GLOBAL OPTIONS
+    timeoutlen			|g:textobj#sandwich#timeoutlen|
+    stimeoutlen			|g:textobj#sandwich#stimeoutlen|
+    latest_jump			|g:textobj#sandwich#latest_jump|
 MISCELLANEOUS			|textobj-sandwich-miscellaneous|
   It is not what I expect with key sequence dib.
   Timed out so frequently!
@@ -65,7 +68,7 @@ searches a sandwiched text automatically. The sets of surroundings called
 |textobj-sandwich-configuration|. |<Plug>(textobj-sandwich-auto-i)| selects
 a surrounded region without surroundings. |<Plug>(textobj-sandwich-auto-a)|
 selects a surrounded region including surroundings. These are mapped to
-key sequences ib and ab in default.
+key sequences `ib` and `ab` in default.
 
 |<Plug>(textobj-sandwich-query-i)| and |<Plug>(textobj-sandwich-query-a)|
 searches a sandwiched text based on a user input. If the user input is matched
@@ -73,7 +76,7 @@ with a recipe registered, then it selects the text determined by the matched
 recipe. Otherwise it selects the region surrounded by a same character input.
 |<Plug>(textobj-sandwich-query-i)| selects a surrounded region without
 surroundings. |<Plug>(textobj-sandwich-query-a)| selects a surrounded region
-including surroundings. These are mapped to key sequences is and as in
+including surroundings. These are mapped to key sequences `is` and `as` in
 default.
 
 ------------------------------------------------------------------------------
@@ -83,17 +86,17 @@ Assume that the following text and the cursor is on foo.
 >
 	{baz[bar(foo)bar]baz}
 <
-Press vib
+Press `vib`
 >
 	         <->          : selected region
 	{baz[bar(foo)bar]baz}
 <
-Press ib again
+Press `ib` again
 >
 	     <--------->      : selected region
 	{baz[bar(foo)bar]baz}
 <
-Press ib again
+Press `ib` again
 >
 	 <----------------->  : selected region
 	{baz[bar(foo)bar]baz}
@@ -107,7 +110,7 @@ and the other end follows. For example, assume the 5 by 5 text.
 	(bar)
 	(baz)
 <
-When the cursor is on the first line, press <C-v>2jibd
+When the cursor is on the first line, press `<C-v>2jibd`
 >
 	()
 	()
@@ -119,7 +122,7 @@ Next assume that the lines like this:
 	baaar
 	(baz)
 <
-When the cursor is on the first line, press <C-v>2jibd
+When the cursor is on the first line, press `<C-v>2jibd`
 >
 	fo
 	br
@@ -162,22 +165,94 @@ keymappings~
 <Plug>(textobj-sandwich-auto-i)		*<Plug>(textobj-sandwich-auto-i)*
 	The textobject mapping to search and select a sandwiched text
 	automatically. This keymapping selects inside surroundings. The
-	surroundings are not included.
+	surroundings are not included. This keymapping is mapped to `ib` of
+	operator-pending mode and visual mode in default. This keymapping
+	could be mapped to operator-pending mode |:omap|, to visual mode
+	|:xmap|, and also to normal mode |:nmap|.
 
 <Plug>(textobj-sandwich-auto-a)		*<Plug>(textobj-sandwich-auto-a)*
 	The textobject mapping to search and select a sandwiched text
 	automatically. This keymapping selects sandwiched text including
-	surroundings.
+	surroundings. This keymapping is mapped to `ab` of operator-pending
+	mode and visual mode in default. This keymapping could be mapped to
+	operator-pending mode |:omap|, to visual mode |:xmap|, and also to
+	normal mode |:nmap|.
+
 
 <Plug>(textobj-sandwich-query-i)	*<Plug>(textobj-sandwich-query-i)*
 	The textobject mapping to search and select a sandwiched text
 	depending on a user input. This keymapping selects inside
-	surroundings. The surroundings are not included.
+	surroundings. The surroundings are not included. This keymapping is
+	mapped to `is` of operator-pending mode and visual mode in default.
+	This keymapping could be mapped to operator-pending mode |:omap|, to
+	visual mode |:xmap|, and also to normal mode |:nmap|.
+
 
 <Plug>(textobj-sandwich-query-a)	*<Plug>(textobj-sandwich-query-a)*
 	The textobject mapping to search and select a sandwiched text
 	depending on a user input. This keymapping selects sandwiched text
-	including surroundings.
+	including surroundings. This keymapping is mapped to `as` of
+	operator-pending mode and visual mode in default. This keymapping
+	could be mapped to operator-pending mode |:omap|, to visual mode
+	|:xmap|, and also to normal mode |:nmap|.
+
+
+
+
+KEY MAPPING FUNCTIONS~
+
+User can make new mappings by using function interfaces natively.
+
+					*textobj#sandwich#auto()*
+textobj#sandwich#auto(mode, a_or_i[, options[, recipes]])
+	This function is used to make a operator key-mapping as following.
+>
+	onoremap <silent><expr> ib textobj#sandwich#auto('o', 'i')
+	xnoremap <silent><expr> ib textobj#sandwich#auto('x', 'i')
+	onoremap <silent><expr> ab textobj#sandwich#auto('o', 'a')
+	xnoremap <silent><expr> ab textobj#sandwich#auto('x', 'a')
+<
+	If a not-empty dictionary is given to the optional third argument of
+	this function, the local options inside the dictionary override
+	default option values.
+>
+	" example 1
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', {'expand_range': 0})
+
+	" example 2
+	let g:sandwich_alt_options = {'expand_range': 0}
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', g:sandwich_alt_options)
+<
+
+	If a not-empty list of recipes is given to the optional fourth
+	argument of this function, the key mapping use the list instead of
+	|sandwich#recipes| (or |sandwich#default_recipes|) and
+	|textobj#sandwich#recipes| (or |textobj#sandwich#default_recipes|).
+>
+	" example 1
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', {}, [{'buns': ['(', ')']}])
+
+	" example 2
+	let g:sandwich_alt_recipes = [{'buns': ['(', ')']}]
+	onoremap <silent><expr> ib
+	\ textobj#sandwich#auto('o', 'i', {}, g:sandwich_alt_recipes)
+<
+
+
+
+					*textobj#sandwich#query()*
+textobj#sandwich#query(mode, a_or_i[, options[, recipes]])
+	This function is similar as |textobj#sandwich#auto()|, but it is
+	used for declaring new query series textobjects.
+>
+	onoremap <silent><expr> is textobj#sandwich#query('o', 'i')
+	xnoremap <silent><expr> is textobj#sandwich#query('x', 'i')
+	onoremap <silent><expr> as textobj#sandwich#query('o', 'a')
+	xnoremap <silent><expr> as textobj#sandwich#query('x', 'a')
+<
 
 
 
@@ -428,32 +503,41 @@ mode
 
 
 
-operator
-	This filter filters recipes by the operator which is reserved. It is a
-	list of characters representing a operator. As for the case of
-	user-defined operator, put a list instead of a operator strings. The
-	list should have two items, the first item is a operator strings |g@|,
-	and the second item is the name of the operator function.
+expr_filter
+	A user can define filters by oneself. The items of the list is
+	evaluated as |expressions|, and if the value is true (1) then the
+	recipe is valid, if the value is false (0) then the recipe is invalid.
+>
+	" A filter should be defined in somewhere, for example in your vimrc.
+	function! FilterValid()
+	    return 1
+	endfunction
 
-	The following recipe is valid only with |d| operator.
->
+	function! FilterInvalid()
+	    return 0
+	endfunction
+
+	" This recipe is valid
 	let g:sandwich#recipes += [
-	  \    {'buns': ['if', 'endif'], 'operator': ['d'], 'input': ['if']}
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterValid()']}
+	  \  ]
+
+	" This recipe is invalid
+	let g:sandwich#recipes += [
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterInvalid()']}
 	  \  ]
 <
-	An example of user-defined operator.
+	For example, the following filter makes recipes possible to be valid
+	only with a specific operator.
 >
+	function! FilterOperator(operator)
+	    return a:operator ==# v:operator ? 1 : 0
+	endfunction
+
+	" This recipe is valid only with d operator.
 	let g:sandwich#recipes += [
-	  \    {
-	  \      'buns': ['(', ')'],
-	  \      'operator': [['g@', 'operator#sandwich#delete']]
-	  \    }
+	  \    {'buns': ['(', ')'], 'expr_filter': ['FilterOperator("d")']}
 	  \  ]
-<
-	The name of the operator function could be checked by the following
-	command after using the operator.
->
-	:echo &operatorfunc
 <
 
 
@@ -495,7 +579,7 @@ g:textobj#sandwich#options		*g:textobj#sandwich#options*
 	    - regex
 	    - skip_regex
 	    - quoteescape
-	    - eval
+	    - expr
 	    - synchro
 	    - noremap
 	    - syntax
@@ -526,7 +610,7 @@ nesting
 	the cursor is on foo of the text, expected results are different
 	depending on whether it makes nest or not.
 
-	Yank a part of text by a key sequence yib.
+	Yank a part of text by a key sequence `yib`.
 >
 	                 #              : cursor
 	case1:          (foo(bar)baz)   : foo(bar)baz is the expected result
@@ -589,6 +673,31 @@ skip_regex
 	" Press dib
 	" baaaaaaaar   --->   bar
 <
+	For instance, successive two quotes, '', inside a quote wrapped string
+	literal is regarded as a quote.
+>
+	:echo 'foo''bar'		" -> foo'bar
+<
+	To skip these quote, use this option.
+>
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ["'", "'"],
+	  \     'filetype': ['vim'],
+	  \     'expand_range': 0,
+	  \     'skip_regex':
+	  \       [
+	  \         "[^']\\%(''\\)*\\%#\\zs''",
+	  \         "[^']\\%(''\\)*'\\%#\\zs'",
+	  \       ],
+	  \     'quoteescape': 1,
+	  \     'match_syntax': 2,
+	  \   }
+	  \ ]
+<
+	Cursor is moving in searching positions, thus user can use the pattern
+	|\%#|.
+
 
 
 
@@ -606,7 +715,7 @@ quoteescape
 
 
 
-eval
+expr
 	If this option is 1 or 2, requisite "buns" is evaluated as expression.
 	If this option is 1, "buns" are evaluated once and repeat it by |.|
 	command. If this option is 2, "buns" are evaluated every times in |.|
@@ -614,8 +723,32 @@ eval
 	unnamed register. (ref. |let-@|, |quotequote|)
 >
 	let g:sandwich#recipes += [
-	  \   {'buns': ['@@', '@@'], 'eval': 1, 'input': ['@']}
+	  \   {'buns': ['@@', '@@'], 'expr': 1, 'input': ['@']}
 	  \ ]
+<
+	NOTE: If the expressions query user something by |getchar()| or
+	      |input()|, the recipe may cause problem on the
+	      |operator-sandwich| delete operator and |textobj-sandwich|
+	      textobjects, |<Plug>(textobj-sandwich-auto-i)| and
+	      |<Plug>(textobj-sandwich-auto-a)|. To avoid this problem, it is
+	      reccomended to use "kind" filter and "synchro" option. For
+	      example, the following recipe asks two characters to select a
+	      text between the two characters.
+>
+	let g:textobj#sandwich#recipes += [
+	  \    {
+	  \      'buns': ['GetChar()', 'GetChar()'],
+	  \      'kind': ['query'],
+	  \      'expr': 1,
+	  \      'synchro': 1,
+	  \      'input': ['f']
+	  \    },
+	  \ ]
+
+	function! GetChar() abort
+	  let c = getchar()
+	  return type(c) == type(0) ? nr2char(c) : c
+	endfunction
 <
 	Default values
 	  * query: 0
@@ -628,10 +761,11 @@ synchro
 	|<Plug>(operator-sandwich-delete)| or
 	|<Plug>(operator-sandwich-replace)|, the matched recipe is passed to
 	these operators and the surroundings are deleted/replaced in higher
-	priority. This option is useful when a "eval"uated recipe in
-	|g:textobj#sandwich#recipes| collaborates with these operators. When
-	a recipe is passed to the operators, "replace" and "delete" is
-	automatically added to "kind" filter.
+	priority. This option is useful when a evaluated recipe by "expr"
+	option in |g:textobj#sandwich#recipes| collaborates with these
+	operators. When a recipe is passed to the operators, "replace" and
+	"delete" is automatically added to "kind" filter if the recipe has
+	"kind" key and does not have both "delete" and "replace" in the list.
 	See |operator-sandwich-configuration|.
 
 	Default values
@@ -671,7 +805,8 @@ syntax
 	      candidate, it is regarded as the matched. The syntax stack can
 	      be checked by using following keymapping on a text.
 >
-	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')), 'synIDattr(synIDtrans(v:val), "name")')<CR>
+	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')),
+	                        \ 'synIDattr(synIDtrans(v:val), "name")')<CR>
 <
 	Default values
 	  * query: []
@@ -680,13 +815,15 @@ syntax
 
 
 match_syntax
-	If this option is 1, the textobjects check the heads of both
-	surroundings whether their syntaxes are matched or not. If not, the
-	candidate is skipped. In addition to that, if this option is 2, the
-	textobjects also check the both edge of the surrounded text. In many
-	cases, both sides of surroundings have same syntax. For example, " is
-	frequently used for the string literal, " itself would be applied
-	String syntax and the inside text also applied the same.
+	If this option is 1, the textobjects check the both surroundings
+	whether their syntaxes are matched or not. If not, the candidate is
+	skipped. In addition to that, if this option is 2, the textobjects
+	also check the both edge of the surrounded text. In many cases, both
+	sides of surroundings have same syntaxes. For example, "" is
+	frequently used for the string literal, "" itself would be applied
+	String syntax and the inside text also applied the same. If the
+	surrounding is not a character, then only the first character would
+	be checked.
 >
 	let g:sandwich#recipes += [
 	  \   {
@@ -696,17 +833,24 @@ match_syntax
 	  \     'match_syntax': 2
 	  \ ]
 <
-	NOTE: The applied syntax can be checked by using the following
-	      keymapping on a text.
+	NOTE: The applied (displayed) syntax can be checked by using the
+	      following keymapping on a text.
 >
-	nnoremap <Leader>S :echo synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')<CR>
+	nnoremap <Leader>S
+	\ :echo synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')<CR>
 <
-	      If the syntax at the head of a former surrounding is included in
-	      syntax stacks of the other positions, then it is regarded as the
-	      matched. A syntax stack can be checked by using the following
-	      keymapping on a text.
+	      The displayed syntaxes of both surroundings should be matched to
+	      be valid. However, as for the case of insides the surroundings
+	      the matched condition is somehow relaxed, only have to be
+	      included in syntax stacks. Because, for instance, output
+	      conversion specifiers in string literal like "%s" is highlighted
+	      with different color. Even though the fact, "String" is expect
+	      to included in its syntax stack, if it is true it works same as
+	      other string literals. A syntax stack can be checked by using
+	      the following key mapping on a text.
 >
-	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')), 'synIDattr(synIDtrans(v:val), "name")')<CR>
+	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')),
+	                        \ 'synIDattr(synIDtrans(v:val), "name")')<CR>
 <
 	Default values
 	  * query: 0
@@ -787,16 +931,16 @@ g:textobj#sandwich#latest_jump		*g:textobj#sandwich#latest_jump*
 	\        'input("textobj-sandwich:tail: ")'
 	\    ],
 	\    'kind': ['query'],
-	\    'eval': 1,
+	\    'expr': 1,
 	\    'regex': 1,
 	\    'synchro': 1,
-	\    'input': ['f']
+	\    'input': ['i']
 	\ },
 <
 The meanings of these options are explained already. The important thing is
 that this recipe can be called by f key press and realizes the instant
 definition of recipe. This recipe is used like this. First call this recipe,
-for example, press disf on foobarbaz.
+for example, press `disi` on foobarbaz.
 >
 	foobarbaz
 <
@@ -824,7 +968,7 @@ useful.
 MISCELLANEOUS				*textobj-sandwich-miscellaneous*
 
 It is not what I expect with key sequence dib.~
-	The key sequence dib will make this:
+	The key sequence `dib` will make this:
 >
 	(
 	    foo
@@ -855,7 +999,7 @@ Timed out so frequently!~
 
 
 My cursor moved a lot because of unintended selection!~
-	Don't panic. You can use undo |u| command. Or you can go back to the
+	Don't panic. You can use undo |u| command, and you can go back to the
 	original position by |``| command. See
 	|g:textobj#sandwich#latest_jump|.
 
