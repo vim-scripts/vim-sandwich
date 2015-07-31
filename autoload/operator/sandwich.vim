@@ -6,7 +6,7 @@
 
 """ NOTE: Whole design (-: string or number, *: functions, []: list, {}: dictionary) "{{{
 " operator object
-"   - state                  : 0 or 1. If it is called by keymapping, it is 1. If it is called by dot command, it is 0.
+"   - state                  : 0 or 1 or -1. If it is called by keymapping, it is 1. If it is called by dot command, it is 0. -1 is used in order to deactivate the operaor object when the assigned region is not valid.
 "   - count                  : Positive integer. The assigned {count}
 "   - num                    : The number of processed regions in one count. It could be more than 1 only in block wise visual mode.
 "   - mode                   : 'n' or 'x'. Which mode the keymapping is called.
@@ -79,7 +79,7 @@
 "   * {add, delete, replace} : Functions to execute shared processes in each kind of operations.
 "   * finalize               : The function to set modified marks after all operations.
 "}}}
-""" NOTE: Presumable Errors list"{{{
+""" NOTE: Presumable Errors list  "{{{
 " Handled in s:doautcmd()
 "   --> Some error in doautocmd.
 "
@@ -118,9 +118,13 @@ let s:type_dict = type({})
 if v:version > 704 || (v:version == 704 && has('patch237'))
   let s:has_patch_7_4_771 = has('patch-7.4.771')
   let s:has_patch_7_4_310 = has('patch-7.4.310')
+  let s:has_patch_7_4_362 = has('patch-7.4.362')
+  let s:has_patch_7_4_358 = has('patch-7.4.358')
 else
-  let s:has_patch_7_4_771 = v:version > 704 || (v:version == 704 && has('patch771'))
-  let s:has_patch_7_4_310 = v:version > 704 || (v:version == 704 && has('patch310'))
+  let s:has_patch_7_4_771 = v:version == 704 && has('patch771')
+  let s:has_patch_7_4_310 = v:version == 704 && has('patch310')
+  let s:has_patch_7_4_362 = v:version == 704 && has('patch362')
+  let s:has_patch_7_4_358 = v:version == 704 && has('patch358')
 endif
 
 " features
@@ -778,9 +782,7 @@ function! s:search(recipes) dict abort "{{{
       endfor
       call filter(target_list, 's:is_valid_4pos(v:val)')
       if target_list != []
-        call map(target_list, '[v:val, s:get_buf_length(v:val.head1, v:val.tail2)]')
-        call sort(target_list, 's:compare_buf_length')
-        let target = target_list[0][0]
+        let target = s:shortest(target_list)
       endif
     endif
   endif
@@ -903,9 +905,7 @@ function! s:query(recipes) dict abort  "{{{
 
   let id_list = []
   if opt.highlight
-    for act in acts
-      let id_list += s:highlight_add(act)
-    endfor
+    let id_list = s:highlight_add(acts)
   endif
   redraw
 
@@ -984,20 +984,16 @@ function! s:show() dict abort "{{{
   let clock = self.clock
   let acts  = self.acts
   let hi_exited = 0
-  let duration  = self.opt.duration
 
   try
-    let id_list = []
-    for act in acts
-      let id_list += s:highlight_add(act)
-    endfor
+    let id_list = s:highlight_add(acts)
     redraw
 
     let c = 0
     call clock.start()
     while c == 0
       let c = getchar(0)
-      if clock.started && clock.erapsed() > duration
+      if clock.started && clock.erapsed() > self.opt.duration
         break
       endif
       sleep 20m
@@ -1080,7 +1076,9 @@ function! s:execute(kind, motionwise) dict abort  "{{{
   try
     call self.recipes.integrate(a:kind, a:motionwise, self.mode)
     call self.initialize(a:kind, a:motionwise)
-    call self[a:kind]()
+    if self.state >= 0
+      call self[a:kind]()
+    endif
   catch /^OperatorSandwichError:\%(Add\|Delete\|Replace\):ReadOnly/
     let errormsg = 'operator-sandwich: Cannot make changes to read-only buffer.'
   catch
@@ -1100,8 +1098,21 @@ function! s:execute(kind, motionwise) dict abort  "{{{
 endfunction
 "}}}
 function! s:initialize(kind, motionwise) dict abort "{{{
-  let region      = s:get_assigned_region(a:motionwise)
+  let region = s:get_assigned_region(a:kind, a:motionwise)
   let region_list = a:motionwise ==# 'block' ? self.split(region) : [region]
+
+  if region == s:null_2pos
+    " deactivate
+    let self.state = -1
+  else
+    " hide_cursor
+    if s:has_gui_running
+      let self.cursor_info = &guicursor
+      set guicursor+=o:block-NONE
+    else
+      let self.cursor_info = &t_ve
+    endif
+  endif
 
   let self.num = len(region_list)
   let self.opt.timeoutlen = s:get('timeoutlen', &timeoutlen)
@@ -1166,14 +1177,6 @@ function! s:initialize(kind, motionwise) dict abort "{{{
     let act = stuff.acts[j]
     let act.region = region_list[j]
   endfor
-
-  " hide_cursor
-  if s:has_gui_running
-    let self.cursor_info = &guicursor
-    set guicursor+=o:block-NONE
-  else
-    let self.cursor_info = &t_ve
-  endif
 endfunction
 "}}}
 function! s:split(region) dict abort  "{{{
@@ -1284,7 +1287,6 @@ endfunction
 "}}}
 function! s:delete() dict abort  "{{{
   let hi_exited = 0
-  let duration  = self.opt.duration
 
   for i in range(self.count)
     let stuff = self.basket[i]
@@ -1298,7 +1300,7 @@ function! s:delete() dict abort  "{{{
       break
     endif
 
-    if !hi_exited && stuff.opt.integrated.highlight && duration > 0
+    if !hi_exited && stuff.opt.integrated.highlight && self.opt.duration> 0
       call winrestview(self.view)
       let hi_exited = stuff.show()
     endif
@@ -1368,62 +1370,66 @@ function! s:replace() dict abort  "{{{
 endfunction
 "}}}
 function! s:finalize() dict abort  "{{{
-  " restore view
-  if self.view != {}
-    call winrestview(self.view)
-    let self.view = {}
-  endif
-
-  if self.basket != [] && filter(copy(self.basket), 'v:val.done') != []
-    " set modified marks
-    let modmark = self.modmark
-    if modmark.head != s:null_pos && modmark.tail != s:null_pos
-          \ && s:is_equal_or_ahead(modmark.tail, modmark.head)
-      call setpos("'[", modmark.head)
-      call setpos("']", modmark.tail)
+  if self.state >= 0
+    " restore view
+    if self.view != {}
+      call winrestview(self.view)
+      let self.view = {}
     endif
 
-    " set cursor position
-    let cursor_opt = 'inner_head'
-    for i in range(self.count - 1, 0, -1)
-      let stuff = self.basket[i]
-      if stuff.done
-        let cursor_opt = stuff.opt.integrated.cursor
-        let cursor_opt = cursor_opt =~# '^\%(keep\|\%(inner_\)\?\%(head\|tail\)\)$'
-                      \ ? cursor_opt : 'inner_head'
-        break
+    if self.basket != [] && filter(copy(self.basket), 'v:val.done') != []
+      " set modified marks
+      let modmark = self.modmark
+      if modmark.head != s:null_pos && modmark.tail != s:null_pos
+            \ && s:is_equal_or_ahead(modmark.tail, modmark.head)
+        call setpos("'[", modmark.head)
+        call setpos("']", modmark.tail)
       endif
-    endfor
 
-    if self.state || self.keepable
-      let cursor = cursor_opt =~# '^\%(keep\|inner_\%(head\|tail\)\)$' ? self.cursor[cursor_opt]
-              \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
-              \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
-              \ : self.cursor['inner_head']
-      let self.keepable = 0
-    else
-      " In the case of dot repeat, it is impossible to keep original position
-      " unless self.keepable == 1.
-      let cursor = cursor_opt =~# '^inner_\%(head\|tail\)$' ? self.cursor[cursor_opt]
-              \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
-              \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
-              \ : self.cursor['inner_head']
+      " set cursor position
+      let cursor_opt = 'inner_head'
+      for i in range(self.count - 1, 0, -1)
+        let stuff = self.basket[i]
+        if stuff.done
+          let cursor_opt = stuff.opt.integrated.cursor
+          let cursor_opt = cursor_opt =~# '^\%(keep\|\%(inner_\)\?\%(head\|tail\)\)$'
+                        \ ? cursor_opt : 'inner_head'
+          break
+        endif
+      endfor
+
+      if self.state || self.keepable
+        let cursor = cursor_opt =~# '^\%(keep\|inner_\%(head\|tail\)\)$' ? self.cursor[cursor_opt]
+                \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
+                \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
+                \ : self.cursor['inner_head']
+        let self.keepable = 0
+      else
+        " In the case of dot repeat, it is impossible to keep original position
+        " unless self.keepable == 1.
+        let cursor = cursor_opt =~# '^inner_\%(head\|tail\)$' ? self.cursor[cursor_opt]
+                \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
+                \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
+                \ : self.cursor['inner_head']
+      endif
+
+      if s:has_patch_7_4_310
+        " set curswant explicitly
+        call setpos('.', cursor + [cursor[2]])
+      else
+        call setpos('.', cursor)
+      endif
     endif
 
-    if s:has_patch_7_4_310
-      " set curswant explicitly
-      call setpos('.', cursor + [cursor[2]])
-    else
-      call setpos('.', cursor)
+    " restore cursor
+    if has_key(self, 'cursor_info')
+      if s:has_gui_running
+        set guicursor&
+        let &guicursor = self.cursor_info
+      else
+        let &t_ve = self.cursor_info
+      endif
     endif
-  endif
-
-  " restore cursor
-  if s:has_gui_running
-    set guicursor&
-    let &guicursor = self.cursor_info
-  else
-    let &t_ve = self.cursor_info
   endif
 
   " set state
@@ -1602,8 +1608,9 @@ endfunction
 "}}}
 
 " get and modify region
-function! s:get_assigned_region(motionwise) abort "{{{
+function! s:get_assigned_region(kind, motionwise) abort "{{{
   let region = {'head': getpos("'["), 'tail': getpos("']")}
+
   if a:motionwise ==# 'line'
     let region.head[2] = 1
     let region.tail[2] = col([region.tail[1], '$']) - 1
@@ -1614,10 +1621,19 @@ function! s:get_assigned_region(motionwise) abort "{{{
   endif
 
   " for multibyte characters
-  if region.tail[3] == 0
+  if region.tail != s:null_pos && region.tail[3] == 0
     call setpos('.', region.tail)
     call search('.', 'bc')
     let region.tail = getpos('.')
+  endif
+
+  " check validity
+  if a:kind ==# 'add'
+    let region = region.head == s:null_pos || region.tail == s:null_pos || !s:is_equal_or_ahead(region.tail, region.head)
+          \ ? deepcopy(s:null_2pos) : region
+  else
+    let region = region.head == s:null_pos || region.tail == s:null_pos || !s:is_ahead(region.tail, region.head)
+          \ ? deepcopy(s:null_2pos) : region
   endif
   return region
 endfunction
@@ -1639,10 +1655,7 @@ function! s:get_right_pos(pos) abort  "{{{
 endfunction
 "}}}
 function! s:check_edges(head, tail, candidate, opt) abort  "{{{
-  let patterns = a:opt.regex
-             \ ? deepcopy(a:candidate.buns)
-             \ : map(deepcopy(a:candidate.buns), 's:escape(v:val)')
-  let patterns = map(patterns, 'substitute(v:val, ''\n'', ''\\n'', ''g'')')
+  let patterns = s:get_patterns(a:candidate, a:opt)
 
   call setpos('.', a:head)
   let head1 = searchpos(patterns[0], 'c', a:tail[1])
@@ -1672,10 +1685,7 @@ function! s:check_edges(head, tail, candidate, opt) abort  "{{{
 endfunction
 "}}}
 function! s:search_edges(head, tail, candidate, opt) abort "{{{
-  let patterns = a:opt.regex
-             \ ? deepcopy(a:candidate.buns)
-             \ : map(deepcopy(a:candidate.buns), 's:escape(v:val)')
-  let patterns = map(patterns, 'substitute(v:val, ''\n'', ''\n'', ''g'')')
+  let patterns = s:get_patterns(a:candidate, a:opt)
 
   call setpos('.', a:head)
   let head1 = searchpos(patterns[0], 'c', a:tail[1])
@@ -1704,6 +1714,17 @@ function! s:search_edges(head, tail, candidate, opt) abort "{{{
         \   'head2': head2, 'tail2': tail2,
         \ }
   return map(target, 's:c2p(v:val)')
+endfunction
+"}}}
+function! s:get_patterns(candidate, opt) abort "{{{
+  let patterns = deepcopy(a:candidate.buns)
+  if !a:opt.regex
+    let patterns = map(patterns, 's:escape(v:val)')
+  endif
+
+  " substitute a break "\n" to a regular expression pattern '\n'
+  let patterns = map(patterns, 'substitute(v:val, ''\n'', ''\\n'', ''g'')')
+  return patterns
 endfunction
 "}}}
 function! s:skip_space(pos, flag, stopline) abort  "{{{
@@ -2059,65 +2080,18 @@ endfunction
 "}}}
 
 " highlight
-function! s:highlight_add(...) abort  "{{{
-  let n          = 0
-  let order      = []
+function! s:highlight_add(acts) abort  "{{{
   let order_list = []
-  for act in a:000
+  for act in a:acts
     let target = act.target
-    let head1 = target.head1
-    let tail1 = target.tail1
-    let head2 = target.head2
-    let tail2 = target.tail2
-    for lnum in range(head1[1], tail1[1])
-      if head1[1] == tail1[1]
-        let order += [head1[1:2] + [tail1[2] - head1[2] + 1]]
-      else
-        if lnum == head1[1]
-          let order += [head1[1:2] + [col([lnum, '$']) - head1[2] + 1]]
-        elseif lnum == tail1[1]
-          let order += [[lnum, 1] + [tail1[2]]]
-        else
-          let order += [[lnum, 1] + [col([lnum, '$'])]]
-        endif
-      endif
-
-      if n == 7
-        let order_list += [order]
-        let n = 0
-      else
-        let n += 1
-      endif
-    endfor
-    let order_list += [order]
-
-    for lnum in range(head2[1], tail2[1])
-      if head2[1] == tail2[1]
-        let order += [head2[1:2] + [tail2[2] - head2[2] + 1]]
-      else
-        if lnum == head2[1]
-          let order += [head2[1:2] + [col([lnum, '$']) - head2[2] + 1]]
-        elseif lnum == tail2[1]
-          let order += [[lnum, 1] + [tail2[2]]]
-        else
-          let order += [[lnum, 1] + [col([lnum, '$'])]]
-        endif
-      endif
-
-      if n == 7
-        let order_list += [order]
-        let n = 0
-      else
-        let n += 1
-      endif
-    endfor
+    call s:highlight_order(order_list, target.head1, target.tail1)
+    call s:highlight_order(order_list, target.head2, target.tail2)
   endfor
-  let order_list += [order]
 
   let id_list    = []
   if order_list != []
     for order in order_list
-      let id_list += [matchaddpos('OperatorSandwichBuns', order)]
+      let id_list += s:matchaddpos('OperatorSandwichBuns', order)
     endfor
   endif
   return id_list
@@ -2126,6 +2100,58 @@ endfunction
 function! s:highlight_del(id) abort "{{{
   return matchdelete(a:id)
 endfunction
+"}}}
+function! s:highlight_order(order_list, head, tail) abort "{{{
+  if a:head != s:null_pos && a:tail != s:null_pos && s:is_equal_or_ahead(a:tail, a:head)
+    let n     = 0
+    let order = []
+
+    for lnum in range(a:head[1], a:tail[1])
+      if a:head[1] == a:tail[1]
+        let order += [a:head[1:2] + [a:tail[2] - a:head[2] + 1]]
+      else
+        if lnum == a:head[1]
+          let order += [a:head[1:2] + [col([lnum, '$']) - a:head[2] + 1]]
+        elseif lnum == a:tail[1]
+          let order += [[lnum, 1] + [a:tail[2]]]
+        else
+          let order += [[lnum]]
+        endif
+      endif
+
+      if n == 7
+        call add(a:order_list, order)
+        let order = []
+        let n = 0
+      else
+        let n += 1
+      endif
+    endfor
+
+    if order != []
+      call add(a:order_list, order)
+    endif
+  endif
+endfunction
+"}}}
+" function! s:matchaddpos(group, pos) abort "{{{
+if s:has_patch_7_4_362
+  function! s:matchaddpos(group, pos) abort
+    return [matchaddpos(a:group, a:pos)]
+  endfunction
+else
+  function! s:matchaddpos(group, pos) abort
+    let id_list = []
+    for pos in a:pos
+      if len(pos) == 1
+        let id_list += [matchadd(a:group, printf('\%%%dl', pos[0]))]
+      else
+        let id_list += [matchadd(a:group, printf('\%%%dl\%%>%dc.*\%%<%dc', pos[0], pos[1]-1, pos[1]+pos[2]))]
+      endif
+    endfor
+    return id_list
+  endfunction
+endif
 "}}}
 
 " miscellaneous
@@ -2156,11 +2182,7 @@ function! s:get_buf_length(start, end) abort  "{{{
   return len
 endfunction
 "}}}
-function! s:compare_buf_length(i1, i2) abort  "{{{
-  return a:i2[1] - a:i1[1]
-endfunction
-"}}}
-function! s:c2p(coord) abort"{{{
+function! s:c2p(coord) abort  "{{{
   return [0] + a:coord + [0]
 endfunction
 "}}}
@@ -2218,6 +2240,33 @@ endfunction
 function! s:escape(string) abort  "{{{
   return escape(a:string, '~"\.^$[]*')
 endfunction
+"}}}
+" function! s:shortest(list) abort  "{{{
+if s:has_patch_7_4_358
+  function! s:shortest(list) abort
+    call map(a:list, '[v:val, s:get_buf_length(v:val.head1, v:val.tail2)]')
+    call sort(a:list, 's:compare_buf_length')
+    return a:list[0][0]
+  endfunction
+
+  function! s:compare_buf_length(i1, i2) abort
+    return a:i2[1] - a:i1[1]
+  endfunction
+else
+  function! s:shortest(list) abort
+    call map(a:list, '[v:val, s:get_buf_length(v:val.head1, v:val.tail2)]')
+    let len = len(a:list)
+    let min = len - 1
+    if len - 2 >= 0
+      for i in range(len - 2, 0, -1)
+        if a:list[min][1] >= a:list[i][1]
+          let min = i
+        endif
+      endfor
+    endif
+    return a:list[min][0]
+  endfunction
+endif
 "}}}
 
 " recipes "{{{
