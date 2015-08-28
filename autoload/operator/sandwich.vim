@@ -41,12 +41,12 @@
 "       {}clock              : The object to measure the time.
 "         - started          : If the stopwatch has started, then 1. Otherwise 0.
 "         - paused           : If the stopwatch has paused, then 1. Otherwise 0.
-"         - losstime         : The erapsed time in paused periods.
+"         - losstime         : The elapsed time in paused periods.
 "         []zerotime         : The time to start the measurement.
 "         []pause_at         : The time to start temporal pause.
 "         * start            : The function to start the stopwatch.
 "         * pause            : The function to pause the stopwatch.
-"         * erapsed          : The function to check the erapsed time from zerotime substituting losstime.
+"         * elapsed          : The function to check the elapsed time from zerotime substituting losstime.
 "         * stop             : The function to stop the measurement.
 "       {}opt                : [Linked from act.opt]
 "         - filter           : A strings for integrate() function to filter out redundant options.
@@ -111,8 +111,10 @@ let s:null_4pos  = {
 
 " types
 let s:type_num  = type(0)
+let s:type_str  = type('')
 let s:type_list = type([])
 let s:type_dict = type({})
+let s:type_fref = type(function('tr'))
 
 " patchs
 if v:version > 704 || (v:version == 704 && has('patch237'))
@@ -120,16 +122,22 @@ if v:version > 704 || (v:version == 704 && has('patch237'))
   let s:has_patch_7_4_310 = has('patch-7.4.310')
   let s:has_patch_7_4_362 = has('patch-7.4.362')
   let s:has_patch_7_4_358 = has('patch-7.4.358')
+  let s:has_patch_7_4_392 = has('patch-7.4.392')
 else
   let s:has_patch_7_4_771 = v:version == 704 && has('patch771')
   let s:has_patch_7_4_310 = v:version == 704 && has('patch310')
   let s:has_patch_7_4_362 = v:version == 704 && has('patch362')
   let s:has_patch_7_4_358 = v:version == 704 && has('patch358')
+  let s:has_patch_7_4_392 = v:version == 704 && has('patch392')
 endif
 
 " features
 let s:has_reltime_and_float = has('reltime') && has('float')
 let s:has_gui_running = has('gui_running')
+
+" Others
+" NOTE: This would be updated in each operator functions (operator#sandwich#{add/delete/replce})
+let s:is_in_cmdline_window = 0
 "}}}
 
 """ Public funcs
@@ -191,6 +199,7 @@ endfunction
 " Operator funcs
 function! operator#sandwich#add(motionwise, ...) abort  "{{{
   if exists('g:operator#sandwich#object')
+    call s:update_is_in_cmdline_window()
     call s:doautocmd('OperatorSandwichAddPre')
     call g:operator#sandwich#object.execute('add', a:motionwise)
     call s:doautocmd('OperatorSandwichAddPost')
@@ -199,6 +208,7 @@ endfunction
 "}}}
 function! operator#sandwich#delete(motionwise, ...) abort  "{{{
   if exists('g:operator#sandwich#object')
+    call s:update_is_in_cmdline_window()
     call s:doautocmd('OperatorSandwichDeletePre')
     call g:operator#sandwich#object.execute('delete', a:motionwise)
     call s:doautocmd('OperatorSandwichDeletePost')
@@ -207,6 +217,7 @@ endfunction
 "}}}
 function! operator#sandwich#replace(motionwise, ...) abort  "{{{
   if exists('g:operator#sandwich#object')
+    call s:update_is_in_cmdline_window()
     call s:doautocmd('OperatorSandwichReplacePre')
     call g:operator#sandwich#object.execute('replace', a:motionwise)
     call s:doautocmd('OperatorSandwichReplacePost')
@@ -373,7 +384,7 @@ function! s:clock_pause() dict abort "{{{
   let self.paused   = 1
 endfunction
 "}}}
-function! s:clock_erapsed() dict abort "{{{
+function! s:clock_elapsed() dict abort "{{{
   if self.started
     let total = str2float(reltimestr(reltime(self.zerotime)))
     return floor((total - self.losstime)*1000)
@@ -398,7 +409,7 @@ let s:clock = {
       \ }
 let s:clock.start   = function('s:clock_start')
 let s:clock.pause   = function('s:clock_pause')
-let s:clock.erapsed = function('s:clock_erapsed')
+let s:clock.elapsed = function('s:clock_elapsed')
 let s:clock.stop    = function('s:clock_stop')
 "}}}
 
@@ -424,71 +435,71 @@ function! s:add_once(buns, undojoin, done, next_act) dict abort "{{{
   endif
 
   if s:is_valid_4pos(target)
-    if opt.skip_space
-      call s:skip_space(target.head1, 'c',  target.head2[1])
-      call s:skip_space(target.head2, 'bc', target.tail1[1])
-    endif
+        \ && s:is_equal_or_ahead(target.head2, target.head1)
+    let target.head2[0:3] = s:get_right_pos(target.head2)
+    call self.set_indent()
 
-    if s:is_valid_4pos(target)
-          \ && s:is_equal_or_ahead(target.head2, target.head1)
-      let target.head2[0:3] = s:get_right_pos(target.head2)
-      call self.set_indent()
-
-      try
-        call setpos('.', target.head2)
-        if opt.linewise
-          execute undojoin_cmd . startinsert_o . a:buns[1]
-          let is_linewise[1] = 1
-        else
-          execute undojoin_cmd . startinsert_i . a:buns[1]
-        endif
-        let indent[1] = indent(line("']"))
-        let tail = getpos("']")
-
-        call setpos('.', target.head1)
-        if opt.linewise
-          execute startinsert_O . a:buns[0]
-          let is_linewise[0] = 1
-        else
-          execute startinsert_i . a:buns[0]
-        endif
-        let indent[0] = indent(line("']"))
-        let head = getpos("'[")
-      catch /^Vim\%((\a\+)\)\=:E21/
-        throw 'OperatorSandwichError:Add:ReadOnly'
-      finally
-        call self.restore_indent()
-      endtry
-
-      " get tail
-      call s:push1(tail, target, a:buns, indent, is_linewise)
-
-      " update modmark
-      if modmark.head == s:null_pos || s:is_ahead(modmark.head, head)
-        let modmark.head = head
-      endif
-      if modmark.tail == s:null_pos
-        let modmark.tail = tail
+    try
+      call setpos('.', target.head2)
+      if s:is_in_cmdline_window
+        " workaround for a bug in cmdline-window
+        call s:paste(0, a:buns, undojoin_cmd)
+      elseif opt.linewise
+        execute undojoin_cmd . startinsert_o . a:buns[1]
+        let is_linewise[1] = 1
       else
-        call s:shift_for_add(modmark.tail, target, a:buns, indent, is_linewise)
-        if s:is_ahead(tail, modmark.tail)
-          let modmark.tail = tail
-        endif
+        execute undojoin_cmd . startinsert_i . a:buns[1]
       endif
+      let indent[1] = indent(line("']"))
+      let tail = getpos("']")
 
-      " update cursor position
-      call s:shift_for_add(self.cursor.inner_head, target, a:buns, indent, is_linewise)
-      call s:shift_for_add(self.cursor.keep,       target, a:buns, indent, is_linewise)
-      call s:shift_for_add(self.cursor.inner_tail, target, a:buns, indent, is_linewise)
+      call setpos('.', target.head1)
+      if s:is_in_cmdline_window
+        " workaround for a bug in cmdline-window
+        call s:paste(1, a:buns)
+      elseif opt.linewise
+        execute startinsert_O . a:buns[0]
+        let is_linewise[0] = 1
+      else
+        execute startinsert_i . a:buns[0]
+      endif
+      let indent[0] = indent(line("']"))
+      let head = getpos("'[")
+    catch /^Vim\%((\a\+)\)\=:E21/
+      throw 'OperatorSandwichError:Add:ReadOnly'
+    finally
+      call self.restore_indent()
+    endtry
 
-      " update next_act
-      let a:next_act.region.head = copy(head)
-      let a:next_act.region.tail = s:get_left_pos(tail)
+    " get tail
+    call s:push1(tail, target, a:buns, indent, is_linewise)
 
-      let undojoin = 0
-      let done     = 1
+    " update modmark
+    if modmark.head == s:null_pos || s:is_ahead(modmark.head, head)
+      let modmark.head = head
     endif
+    if modmark.tail == s:null_pos
+      let modmark.tail = tail
+    else
+      call s:shift_for_add(modmark.tail, target, a:buns, indent, is_linewise)
+      if s:is_ahead(tail, modmark.tail)
+        let modmark.tail = tail
+      endif
+    endif
+
+    " update cursor position
+    call s:shift_for_add(self.cursor.inner_head, target, a:buns, indent, is_linewise)
+    call s:shift_for_add(self.cursor.keep,       target, a:buns, indent, is_linewise)
+    call s:shift_for_add(self.cursor.inner_tail, target, a:buns, indent, is_linewise)
+
+    " update next_act
+    let a:next_act.region.head = copy(head)
+    let a:next_act.region.tail = s:get_left_pos(tail)
+
+    let undojoin = 0
+    let done     = 1
   endif
+
   return [undojoin, done]
 endfunction
 "}}}
@@ -615,7 +626,10 @@ function! s:replace_once(buns, undojoin, done, next_act) dict abort "{{{
       let @@ = ''
       execute undojoin_cmd . printf(cmd, 'target.tail2')
       let deletion[1] = @@
-      if opt.linewise == 2 ||
+      if s:is_in_cmdline_window
+        " workaround for a bug in cmdline-window
+        call s:paste(0, a:buns)
+      elseif opt.linewise == 2 ||
             \ (opt.linewise && match(getline('.'), '^\s*$') > -1)
         if getpos('.')[1] != target.head1[1]
           .delete
@@ -633,7 +647,10 @@ function! s:replace_once(buns, undojoin, done, next_act) dict abort "{{{
       let @@ = ''
       execute printf(cmd, 'target.tail1')
       let deletion[0] = @@
-      if opt.linewise == 2 ||
+      if s:is_in_cmdline_window
+        " workaround for a bug in cmdline-window
+        call s:paste(1, a:buns)
+      elseif opt.linewise == 2 ||
             \ (opt.linewise && match(getline('.'), '^\s*$') > -1)
         .delete
         execute startinsert_O . a:buns[0]
@@ -809,7 +826,8 @@ function! s:set_indent() dict abort "{{{
     let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = [1, 0, 0, '']
     let indent.restore_indent = 1
   elseif opt.autoindent == 2
-    let [&l:smartindent, &l:cindent, &l:indentexpr] = [1, 0, '']
+    " NOTE: 'Smartindent' requires 'autoindent'. :help 'smartindent'
+    let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = [1, 1, 0, '']
     let indent.restore_indent = 1
   elseif opt.autoindent == 3
     let [&l:cindent, &l:indentexpr] = [1, '']
@@ -846,7 +864,7 @@ function! s:restore_indent() dict abort  "{{{
     elseif opt.autoindent == 1
       let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = indent.autoindent
     elseif opt.autoindent == 2
-      let [&l:smartindent, &l:cindent, &l:indentexpr] = indent.autoindent[1:]
+      let [&l:autoindent, &l:smartindent, &l:cindent, &l:indentexpr] = indent.autoindent
     elseif opt.autoindent == 3
       let [&l:cindent, &l:indentexpr] = indent.autoindent[2:]
     endif
@@ -917,7 +935,7 @@ function! s:query(recipes) dict abort  "{{{
     while 1
       let c = getchar(0)
       if c == 0
-        if clock.started && timeoutlen > 0 && clock.erapsed() > timeoutlen
+        if clock.started && timeoutlen > 0 && clock.elapsed() > timeoutlen
           let [input, recipes] = last_compl_match
           break
         else
@@ -930,10 +948,10 @@ function! s:query(recipes) dict abort  "{{{
       let input .= c
 
       " check forward match
-      let n_fwd = len(filter(recipes, 's:is_input_matched(v:val, input, 0)'))
+      let n_fwd = len(filter(recipes, 's:is_input_matched(v:val, input, self.opt, 0)'))
 
       " check complete match
-      let n_comp = len(filter(copy(recipes), 's:is_input_matched(v:val, input, 1)'))
+      let n_comp = len(filter(copy(recipes), 's:is_input_matched(v:val, input, self.opt, 1)'))
       if n_comp
         if len(recipes) == n_comp
           break
@@ -954,14 +972,14 @@ function! s:query(recipes) dict abort  "{{{
     call clock.stop()
 
     " pick up and register a recipe
-    if filter(recipes, 's:is_input_matched(v:val, input, 1)') != []
+    if filter(recipes, 's:is_input_matched(v:val, input, self.opt, 1)') != []
       let recipe = recipes[0]
     else
       if input ==# "\<Esc>" || input ==# "\<C-c>" || input ==# ''
         let recipe = {}
       else
         let c = split(input, '\zs')[0]
-        let recipe = {'buns': [c, c]}
+        let recipe = {'buns': [c, c], 'expr': 0}
       endif
     endif
 
@@ -993,7 +1011,7 @@ function! s:show() dict abort "{{{
     call clock.start()
     while c == 0
       let c = getchar(0)
-      if clock.started && clock.erapsed() > self.opt.duration
+      if clock.started && clock.elapsed() > self.opt.duration
         break
       endif
       sleep 20m
@@ -1040,7 +1058,8 @@ function! s:get_buns() dict abort  "{{{
   if (opt.expr && !self.evaluated) || opt.expr == 2
     echo ''
     let buns = opt.expr == 2 ? deepcopy(buns) : buns
-    call map(buns, 'eval(v:val)')
+    let buns[0] = s:eval(buns[0], 1)
+    let buns[1] = s:eval(buns[1], 0)
     let self.evaluated = 1
     redraw
     echo ''
@@ -1081,6 +1100,9 @@ function! s:execute(kind, motionwise) dict abort  "{{{
     endif
   catch /^OperatorSandwichError:\%(Add\|Delete\|Replace\):ReadOnly/
     let errormsg = 'operator-sandwich: Cannot make changes to read-only buffer.'
+  catch /^OperatorSandwichCancel/
+    " I don't know why it can be released here, but anyway it can be done.
+    unlet! g:operator#sandwich#object
   catch
     let errormsg = printf('operator-sandwich: Unanticipated error. [%s] %s', v:throwpoint, v:exception)
     unlet! g:operator#sandwich#object
@@ -1119,6 +1141,8 @@ function! s:initialize(kind, motionwise) dict abort "{{{
   let self.opt.timeoutlen = self.opt.timeoutlen < 0 ? 0 : self.opt.timeoutlen
   let self.opt.duration = s:get('highlight_duration', 200)
   let self.opt.duration = self.opt.duration < 0 ? 0 : self.opt.duration
+  let self.opt.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt[a:kind][a:motionwise]), '\|'))
+  let self.opt.integrate  = function('s:opt_integrate')
   let self.cursor.inner_head = region.head
   let self.cursor.inner_tail = region.tail
   call self.opt.default.update(deepcopy(g:operator#sandwich#options[a:kind][a:motionwise]))
@@ -1136,11 +1160,8 @@ function! s:initialize(kind, motionwise) dict abort "{{{
       let stuff.cursor         = self.cursor
       let stuff.modmark        = self.modmark
       let stuff.opt            = copy(self.opt)
-      let stuff.opt.filter     = printf('v:key =~# ''\%%(%s\)''',
-            \ join(keys(s:default_opt[a:kind][a:motionwise]), '\|'))
       let stuff.opt.recipe     = deepcopy(s:opt)
       let stuff.opt.integrated = deepcopy(s:opt)
-      let stuff.opt.integrate  = function('s:opt_integrate')
       call stuff.opt.integrate()
       for act in stuff.acts
         let act.cursor  = stuff.cursor
@@ -1249,6 +1270,11 @@ function! s:add() dict abort "{{{
       let act.target.tail1 = act.target.head1
       let act.target.head2 = copy(act.region.tail)
       let act.target.tail2 = act.target.head2
+
+      if opt.skip_space
+        call s:skip_space(act.target.head1, 'c',  act.target.head2[1])
+        call s:skip_space(act.target.head2, 'bc', act.target.tail1[1])
+      endif
     endfor
 
     if self.state
@@ -1502,7 +1528,11 @@ function! s:has_filetype(candidate) abort "{{{
     return 1
   else
     let filetypes = split(&filetype, '\.')
-    let filter = 'v:val ==# "all" || match(filetypes, v:val) > -1'
+    if filetypes == []
+      let filter = 'v:val ==# "all" || v:val ==# ""'
+    else
+      let filter = 'v:val ==# "all" || (v:val !=# "" && match(filetypes, v:val) > -1)'
+    endif
     return filter(copy(a:candidate['filetype']), filter) != []
   endif
 endfunction
@@ -1562,10 +1592,8 @@ function! s:doautocmd(name) abort "{{{
   try
     execute 'silent doautocmd <nomodeline> User ' . a:name
   catch
-    let errormsg = printf('operator-sandwich: An error occurred in autocmd %s. [%s] %s', a:name, v:throwpoint, v:exception)
-    echohl ErrorMsg
-    echomsg errormsg
-    echohl NONE
+    let errormsg = printf('operator-sandwich: An error occurred in autocmd %s. [%s]', a:name, v:exception)
+    echoerr errormsg
   finally
     call s:restview(view, a:name)
   endtry
@@ -1577,6 +1605,12 @@ endfunction
 "}}}
 function! s:restview(view, name) abort  "{{{
   let [tabpagenr, winnr, view, modhead, modtail] = a:view
+
+  if s:is_in_cmdline_window
+    " in cmdline-window
+    return
+  endif
+
   " tabpage
   try
     execute 'tabnext ' . tabpagenr
@@ -1585,9 +1619,7 @@ function! s:restview(view, name) abort  "{{{
     endif
   catch /^OperatorSandwichError:CouldNotRestoreTabpage/
     let errormsg = printf('operator-sandwich: Could not have restored tabpage after autocmd %s.', a:name)
-    echohl ErrorMsg
-    echomsg errormsg
-    echohl NONE
+    echoerr errormsg
   endtry
 
   " window
@@ -1595,9 +1627,7 @@ function! s:restview(view, name) abort  "{{{
     execute winnr . 'wincmd w'
   catch /^Vim\%((\a\+)\)\=:E16/
     let errormsg = printf('operator-sandwich: Could not have restored window after autocmd %s.', a:name)
-    echohl ErrorMsg
-    echomsg errormsg
-    echohl NONE
+    echoerr errormsg
   endtry
   " view
   call winrestview(view)
@@ -1657,6 +1687,8 @@ endfunction
 function! s:check_edges(head, tail, candidate, opt) abort  "{{{
   let patterns = s:get_patterns(a:candidate, a:opt)
 
+  if patterns[0] ==# '' || patterns[1] ==# '' | return s:null_4pos | endif
+
   call setpos('.', a:head)
   let head1 = searchpos(patterns[0], 'c', a:tail[1])
 
@@ -1686,6 +1718,8 @@ endfunction
 "}}}
 function! s:search_edges(head, tail, candidate, opt) abort "{{{
   let patterns = s:get_patterns(a:candidate, a:opt)
+
+  if patterns[0] ==# '' || patterns[1] ==# '' | return s:null_4pos | endif
 
   call setpos('.', a:head)
   let head1 = searchpos(patterns[0], 'c', a:tail[1])
@@ -1717,6 +1751,10 @@ function! s:search_edges(head, tail, candidate, opt) abort "{{{
 endfunction
 "}}}
 function! s:get_patterns(candidate, opt) abort "{{{
+  if has_key(a:opt, 'expr') && a:opt.expr
+    return ['', '']
+  endif
+
   let patterns = deepcopy(a:candidate.buns)
   if !a:opt.regex
     let patterns = map(patterns, 's:escape(v:val)')
@@ -1772,7 +1810,7 @@ function! s:get_external_diff_region(head, tail, candidate, opt) abort  "{{{
   for [l:count, cursor] in order_list
     " get outer positions
     call setpos('.', cursor)
-    execute printf("%s %s%d%s", cmd, v, l:count, textobj_a)
+    execute printf('%s %s%d%s', cmd, v, l:count, textobj_a)
     execute "normal! \<Esc>"
     let motionwise_a = visualmode()
     let [target.head1, target.tail2] = [getpos("'<"), getpos("'>")]
@@ -1784,7 +1822,7 @@ function! s:get_external_diff_region(head, tail, candidate, opt) abort  "{{{
 
     " get inner positions
     call setpos('.', cursor)
-    execute printf("%s %s%d%s", cmd, v, l:count, textobj_i)
+    execute printf('%s %s%d%s', cmd, v, l:count, textobj_i)
     execute "normal! \<Esc>"
     let motionwise_i = visualmode()
     " FIXME: How should I treat a line breaking?
@@ -2084,8 +2122,10 @@ function! s:highlight_add(acts) abort  "{{{
   let order_list = []
   for act in a:acts
     let target = act.target
-    call s:highlight_order(order_list, target.head1, target.tail1)
-    call s:highlight_order(order_list, target.head2, target.tail2)
+    if s:is_valid_4pos(target)
+      call s:highlight_order(order_list, target.head1, target.tail1)
+      call s:highlight_order(order_list, target.head2, target.tail2)
+    endif
   endfor
 
   let id_list    = []
@@ -2186,16 +2226,24 @@ function! s:c2p(coord) abort  "{{{
   return [0] + a:coord + [0]
 endfunction
 "}}}
-function! s:is_input_matched(candidate, input, flag) abort "{{{
+function! s:is_input_matched(candidate, input, opt, flag) abort "{{{
   if !has_key(a:candidate, 'buns')
     return 0
   elseif !a:flag && a:input ==# ''
     return 1
   endif
 
-  " If a:flag == 0, check forward match. Otherwise, check complete match.
   let candidate = deepcopy(a:candidate)
-  let inputs    = get(candidate, 'input', candidate['buns'])
+  call a:opt.recipe.update(candidate)
+  call a:opt.integrate()
+
+  " 'input' is necessary for 'expr' buns
+  if a:opt.integrated.expr && !has_key(candidate, 'input')
+    return 0
+  endif
+
+  " If a:flag == 0, check forward match. Otherwise, check complete match.
+  let inputs = get(candidate, 'input', candidate['buns'])
   if a:flag
     return filter(inputs, 'v:val ==# a:input') != []
   else
@@ -2233,12 +2281,37 @@ function! s:is_in_between(pos, head, tail) abort  "{{{
     \  && ((a:pos[1] < a:tail[1]) || ((a:pos[1] == a:tail[1]) && (a:pos[2] <= a:tail[2])))
 endfunction
 "}}}
+" function! s:update_is_in_cmdline_window() abort  "{{{
+if s:has_patch_7_4_392
+  function! s:update_is_in_cmdline_window() abort
+    let s:is_in_cmdline_window = getcmdwintype() !=# ''
+  endfunction
+else
+  function! s:update_is_in_cmdline_window() abort
+    let s:is_in_cmdline_window = 0
+    try
+      execute 'tabnext ' . tabpagenr()
+    catch /^Vim\%((\a\+)\)\=:E11/
+      let s:is_in_cmdline_window = 1
+    catch
+    endtry
+  endfunction
+endif
+"}}}
 function! s:get(name, default) abort  "{{{
   return get(g:, 'operator#sandwich#' . a:name, a:default)
 endfunction
 "}}}
 function! s:escape(string) abort  "{{{
   return escape(a:string, '~"\.^$[]*')
+endfunction
+"}}}
+function! s:eval(expr, ...) abort "{{{
+  if type(a:expr) == s:type_fref
+    return call(a:expr, a:000)
+  else
+    return eval(a:expr)
+  endif
 endfunction
 "}}}
 " function! s:shortest(list) abort  "{{{
@@ -2267,6 +2340,21 @@ else
     return a:list[min][0]
   endfunction
 endif
+"}}}
+function! s:paste(is_head, buns, ...) abort "{{{
+  let undojoin_cmd = a:0 > 0 ? a:1 : ''
+  let reg = ['"', getreg('"'), getregtype('"')]
+  let @@ = a:is_head ? a:buns[0] : a:buns[1]
+  if s:has_gui_running
+    execute undojoin_cmd . 'normal! ""P'
+  else
+    let paste  = &paste
+    let &paste = 1
+    execute undojoin_cmd . 'normal! ""P'
+    let &paste = paste
+  endif
+  call call('setreg', reg)
+endfunction
 "}}}
 
 " recipes "{{{

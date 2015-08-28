@@ -3,20 +3,19 @@
 "       region is employed for 'external' user-defined textobjects, it makes
 "       impossible to repeat by dot command. Thus, 'external' is checked by
 "       using visual selection (xmap) in any case.
-" TODO: add a 'skip_expr' option, like {skip} argument for searchpair()
 
 """ NOTE: Whole design (-: string or number, *: functions, []: list, {}: dictionary) "{{{
 " textobj object
 "   - state                 : 0 or 1. If it is called by keymapping, it is 1. If it is called by dot command, it is 0.
 "   - kind                  : 'auto' or 'query'.
 "   - a_or_i                : 'a' or 'i'. It means 'a sandwich' or 'inner sandwich'. See :help text-objects.
-"   - mode                  : 'o' or 'x'. Which mode the keymapping is called.
+"   - mode                  : 'n', 'o' or 'x'. Which mode the keymapping is called.
 "   - count                 : Positive integer. The assigned {count}
 "   []cursor                : [Linked from stuff.cursor] The original position of the cursor
 "   {}view                  : The dictionary to restore the view when it starts.
 "   - done                  : If the textobject could find the target and select, then 1. Otherwise 0.
 "   - visualmode            : If the textobject is called in blockwise visual mode, then '<C-v>'. Otherwise 'v'.
-"   []recipes
+"   {}recipes
 "     []arg                 : The recipes which is used mandatory if it is not empty. It could be given through the 4th argument.
 "     []integrated          : The recipes which are the integrated result of all recipes. This is the one used practically.
 "     * integrate           : The function to set operator.recipes.integrated.
@@ -30,12 +29,12 @@
 "   {}clock                 : The object to measure the time.
 "     - started             : If the stopwatch has started, then 1. Otherwise 0.
 "     - paused              : If the stopwatch has paused, then 1. Otherwise 0.
-"     - losstime            : The erapsed time in paused periods.
+"     - losstime            : The elapsed time in paused periods.
 "     []zerotime            : The time to start the measurement.
 "     []pause_at            : The time to start temporal pause.
 "     * start               : The function to start the stopwatch.
 "     * pause               : The function to pause the stopwatch.
-"     * erapsed             : The function to check the erapsed time from zerotime substituting losstime.
+"     * elapsed             : The function to check the elapsed time from zerotime substituting losstime.
 "     * stop                : The function to stop the measurement.
 "   []basket                : The list holding information and histories for the action.
 "     {}stuff
@@ -106,6 +105,7 @@ let s:null_4coord = {
 let s:type_num  = type(0)
 let s:type_str  = type('')
 let s:type_list = type([])
+let s:type_fref = type(function('tr'))
 
 " patchs
 if v:version > 704 || (v:version == 704 && has('patch237'))
@@ -114,6 +114,10 @@ else
   let s:has_patch_7_4_358 = v:version == 704 && has('patch358')
 endif
 
+" syntax
+" NOTE: this would be evaluated every in textobj.initialiize()
+let s:is_syntax_on = 0
+
 " features
 let s:has_reltime_and_float = has('reltime') && has('float')
 "}}}
@@ -121,9 +125,6 @@ let s:has_reltime_and_float = has('reltime') && has('float')
 """ Public funcs
 function! textobj#sandwich#auto(mode, a_or_i, ...) abort  "{{{
   " make new textobj object
-  if !exists('g:textobj#sandwich#object')
-    let g:textobj#sandwich#object = {}
-  endif
   let g:textobj#sandwich#object = deepcopy(s:textobj)
   let textobj = g:textobj#sandwich#object
 
@@ -136,16 +137,22 @@ function! textobj#sandwich#auto(mode, a_or_i, ...) abort  "{{{
   let textobj.cursor = getpos('.')[1:2]
   let textobj.view   = winsaveview()
   let textobj.recipes.arg = get(a:000, 1, [])
+  let textobj.opt.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt[textobj.kind]), '\|'))
   call textobj.opt.arg.update(get(a:000, 0, {}))
+  call textobj.opt.default.update(deepcopy(g:textobj#sandwich#options[textobj.kind]))
+  call textobj.opt.integrate()
+  call textobj.recipes.integrate(textobj.kind, textobj.mode, textobj.opt.integrated)
 
-  return ":\<C-u>call textobj#sandwich#select()\<CR>"
+  if textobj.recipes.integrated != []
+    let cmd = ":\<C-u>call textobj#sandwich#select()\<CR>"
+  else
+    let cmd = a:mode ==# 'o' ? "\<Esc>" : "\<Plug>(sandwich-nop)"
+  endif
+  return cmd
 endfunction
 "}}}
 function! textobj#sandwich#query(mode, a_or_i, ...) abort  "{{{
   " make new textobj object
-  if !exists('g:textobj#sandwich#object')
-    let g:textobj#sandwich#object = {}
-  endif
   let g:textobj#sandwich#object = deepcopy(s:textobj)
   let textobj = g:textobj#sandwich#object
 
@@ -160,19 +167,18 @@ function! textobj#sandwich#query(mode, a_or_i, ...) abort  "{{{
   let textobj.recipes.arg = get(a:000, 1, [])
   let textobj.opt.timeoutlen = s:get('timeoutlen', &timeoutlen)
   let textobj.opt.timeoutlen = textobj.opt.timeoutlen < 0 ? 0 : textobj.opt.timeoutlen
+  let textobj.opt.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt[textobj.kind]), '\|'))
   call textobj.opt.arg.update(get(a:000, 0, {}))
+  call textobj.opt.default.update(deepcopy(g:textobj#sandwich#options[textobj.kind]))
+  call textobj.opt.integrate()
+  call textobj.recipes.integrate(textobj.kind, textobj.mode, textobj.opt.integrated)
 
-  " query
   call textobj.query()
 
   if textobj.recipes.integrated != []
     let cmd = ":\<C-u>call textobj#sandwich#select()\<CR>"
   else
-    if a:mode ==# 'o'
-      let cmd = "\<Esc>"
-    else
-      let cmd = "\<Plug>(sandwich-nop)"
-    endif
+    let cmd = a:mode ==# 'o' ? "\<Esc>" : "\<Plug>(sandwich-nop)"
   endif
   return cmd
 endfunction
@@ -188,11 +194,11 @@ endfunction
 function! s:opt_integrate() dict abort  "{{{
   call self.integrated.clear()
   let default = filter(copy(self.default), self.filter)
-  let recipe  = filter(copy(self.recipe),  self.filter)
   let arg     = filter(copy(self.arg),     self.filter)
-  call extend(self.integrated, self.default, 'force')
-  call extend(self.integrated, self.recipe,  'force')
-  call extend(self.integrated, self.arg,     'force')
+  let recipe  = filter(copy(self.recipe),  self.filter)
+  call extend(self.integrated, default, 'force')
+  call extend(self.integrated, arg,     'force')
+  call extend(self.integrated, recipe,  'force')
 endfunction
 "}}}
 function! s:opt_clear() dict abort "{{{
@@ -230,7 +236,7 @@ function! s:clock_pause() dict abort "{{{
   let self.paused   = 1
 endfunction
 "}}}
-function! s:clock_erapsed() dict abort "{{{
+function! s:clock_elapsed() dict abort "{{{
   if self.started
     let total = str2float(reltimestr(reltime(self.zerotime)))
     return floor((total - self.losstime)*1000)
@@ -254,7 +260,7 @@ let s:clock = {
       \   'pause_at': reltime(),
       \   'start'   : function('s:clock_start'),
       \   'pause'   : function('s:clock_pause'),
-      \   'erapsed' : function('s:clock_erapsed'),
+      \   'elapsed' : function('s:clock_elapsed'),
       \   'stop'    : function('s:clock_stop'),
       \ }
 "}}}
@@ -328,9 +334,7 @@ function! s:search_with_nest(textobj) dict abort  "{{{
     if head == s:null_coord | break | endif
     let coord.head = head
 
-    let self.syntax = opt.match_syntax
-          \ ? [synIDattr(synIDtrans(synID(head[0], head[1], 1)), 'name')]
-          \ : []
+    let self.syntax = s:is_syntax_on && opt.match_syntax ? [s:get_displaysyntax(head)] : []
 
     " search tail
     let tail = searchpairpos(buns[0], '', buns[1], '', 'self.skip(0)', range.bottom, stimeoutlen)
@@ -383,8 +387,7 @@ function! s:search_without_nest(textobj) dict abort  "{{{
   endif
   let _tail = searchpos(buns[0], 'ce', range.bottom, stimeoutlen)
 
-  let self.syntax = opt.match_syntax
-        \ ? [synIDattr(synIDtrans(synID(head[0], head[1], 1)), 'name')] : []
+  let self.syntax = s:is_syntax_on && opt.match_syntax ? [s:get_displaysyntax(head)] : []
 
   " search nearest tail
   call cursor(self.cursor)
@@ -409,8 +412,7 @@ function! s:search_without_nest(textobj) dict abort  "{{{
       " pos is head
       let head = pos
 
-      let self.syntax = opt.match_syntax
-            \ ? [synIDattr(synIDtrans(synID(head[0], head[1], 1)), 'name')] : []
+      let self.syntax = s:is_syntax_on && opt.match_syntax ? [s:get_displaysyntax(head)] : []
 
       " search tail
       call search(buns[0], 'ce', range.bottom, stimeoutlen)
@@ -424,8 +426,7 @@ function! s:search_without_nest(textobj) dict abort  "{{{
       call cursor(pos)
       let tail = self.searchpos(buns[1], 'ce',  range.bottom, stimeoutlen, 1)
 
-      let self.syntax = opt.match_syntax
-            \ ? [synIDattr(synIDtrans(synID(tail[0], tail[1], 1)), 'name')] : []
+      let self.syntax = s:is_syntax_on && opt.match_syntax ? [s:get_displaysyntax(tail)] : []
 
       " search head
       call search(buns[1], 'bc', range.top, stimeoutlen)
@@ -476,7 +477,7 @@ function! s:get_region(textobj) dict abort "{{{
       let [prev_inner_head, prev_inner_tail] = [coord.inner_head, coord.inner_tail]
       " get outer positions
       call cursor(self.cursor)
-      execute printf("%s %s%d%s", cmd, v, range.count, self.external[1])
+      execute printf('%s %s%d%s', cmd, v, range.count, self.external[1])
       execute "normal! \<Esc>"
       let motionwise_a = visualmode()
       let [head, tail] = [getpos("'<")[1:2], getpos("'>")[1:2]]
@@ -490,7 +491,7 @@ function! s:get_region(textobj) dict abort "{{{
 
       " get inner positions
       call cursor(self.cursor)
-      execute printf("%s %s%d%s", cmd, v, range.count, self.external[0])
+      execute printf('%s %s%d%s', cmd, v, range.count, self.external[0])
       execute "normal! \<Esc>"
       let motionwise_i = visualmode()
       let [inner_head, inner_tail] = [getpos("'<")[1:2], getpos("'>")[1:2]]
@@ -557,20 +558,7 @@ function! s:skip(is_head, ...) dict abort  "{{{
     return 1
   endif
 
-  if a:is_head || !opt.match_syntax
-    if opt.syntax != []
-      let list = map(synstack(coord[0], coord[1]),
-            \ 'synIDattr(synIDtrans(v:val), "name")')
-      if !s:is_included_syntax(list, opt.syntax)
-        return 1
-      endif
-    endif
-  else
-    if !s:is_matched_syntax(coord, self.syntax)
-      return 1
-    endif
-  endif
-
+  " quoteescape option
   let skip_patterns = []
   if opt.quoteescape && &quoteescape !=# ''
     for c in split(&quoteescape, '\zs')
@@ -580,12 +568,36 @@ function! s:skip(is_head, ...) dict abort  "{{{
     endfor
   endif
 
-  let skip_patterns += copy(opt.skip_regex)
+  " skip_regex option
+  let skip_patterns += opt.skip_regex
+  let skip_patterns += a:is_head ? opt.skip_regex_head : opt.skip_regex_tail
   if skip_patterns != []
     call cursor(coord)
     for pattern in skip_patterns
       let skip = searchpos(pattern, 'cn', cursor[0], stimeoutlen) == coord
       if skip
+        return 1
+      endif
+    endfor
+  endif
+
+  " syntax, match_syntax option
+  if s:is_syntax_on
+    if a:is_head || !opt.match_syntax
+      if opt.syntax != [] && !s:is_included_syntax(coord, opt.syntax)
+        return 1
+      endif
+    else
+      if !s:is_matched_syntax(coord, self.syntax)
+        return 1
+      endif
+    endif
+  endif
+
+  " skip_expr option
+  if opt.skip_expr != []
+    for Expr in opt.skip_expr
+      if s:eval(Expr, a:is_head, s:c2p(coord))
         return 1
       endif
     endfor
@@ -629,23 +641,41 @@ function! s:is_valid_candidate(textobj) dict abort "{{{
     endif
   endif
 
-  " specific condition for the option 'matched_syntax'
-  if opt.match_syntax != 2
-    let opt_match_syntax_affair = 1
+  " specific condition for the option 'matched_syntax' and 'inner_syntax'
+  if s:is_syntax_on
+    if opt.match_syntax == 2
+      let opt_syntax_affair = s:is_included_syntax(coord.inner_head, self.syntax)
+                        \ && s:is_included_syntax(coord.inner_tail, self.syntax)
+    elseif opt.match_syntax == 3
+      " check inner syntax independently
+      if opt.inner_syntax == []
+        let syntax = [s:get_displaysyntax(coord.inner_head)]
+        let opt_syntax_affair = s:is_included_syntax(coord.inner_tail, syntax)
+      else
+        if s:is_included_syntax(coord.inner_head, opt.inner_syntax)
+          let syntax = [s:get_displaysyntax(coord.inner_head)]
+          let opt_syntax_affair = s:is_included_syntax(coord.inner_tail, syntax)
+        else
+          let opt_syntax_affair = 0
+        endif
+      endif
+    else
+      if opt.inner_syntax == []
+        let opt_syntax_affair = 1
+      else
+        let opt_syntax_affair = s:is_included_syntax(coord.inner_head, opt.inner_syntax)
+                          \ && s:is_included_syntax(coord.inner_tail, opt.inner_syntax)
+      endif
+    endif
   else
-    let synstack_inner_head = map(synstack(coord.inner_head[0], coord.inner_head[1]),
-          \ 'synIDattr(synIDtrans(v:val), "name")')
-    let synstack_inner_tail = map(synstack(coord.inner_tail[0], coord.inner_tail[1]),
-          \ 'synIDattr(synIDtrans(v:val), "name")')
-    let opt_match_syntax_affair = s:is_included_syntax(synstack_inner_head, self.syntax)
-                             \ || s:is_included_syntax(synstack_inner_tail, self.syntax)
+    let opt_syntax_affair = 1
   endif
 
   return s:is_equal_or_ahead(tail, head)
         \ && s:is_in_between(self.cursor, coord.head, coord.tail)
         \ && filter(copy(a:textobj.candidates), filter) == []
         \ && visual_mode_affair
-        \ && opt_match_syntax_affair
+        \ && opt_syntax_affair
 endfunction
 "}}}
 function! s:get_buns() dict abort  "{{{
@@ -657,9 +687,9 @@ function! s:get_buns() dict abort  "{{{
     call clock.pause()
     echo ''
     let buns = opt.expr == 2 ? deepcopy(buns) : buns
-    let buns[0] = eval(buns[0])
+    let buns[0] = s:eval(buns[0], 1)
     if buns[0] !=# ''
-      let buns[1] = eval(buns[1])
+      let buns[1] = s:eval(buns[1], 0)
     endif
     let self.evaluated = 1
     redraw
@@ -729,7 +759,6 @@ let s:stuff = {
 "}}}
 
 function! s:query() dict abort  "{{{
-  call self.recipes.integrate(self.kind, self.mode, self.opt.default)
   let recipes = deepcopy(self.recipes.integrated)
   let clock   = self.clock
   let timeoutlen = self.opt.timeoutlen
@@ -741,7 +770,7 @@ function! s:query() dict abort  "{{{
   while recipes != []
     let c = getchar(0)
     if c == 0
-      if clock.started && timeoutlen > 0 && clock.erapsed() > timeoutlen
+      if clock.started && timeoutlen > 0 && clock.elapsed() > timeoutlen
         let [input, recipes] = last_compl_match
         break
       else
@@ -754,10 +783,10 @@ function! s:query() dict abort  "{{{
     let input .= c
 
     " check forward match
-    let n_fwd = len(filter(recipes, 's:is_input_matched(v:val, input, 0)'))
+    let n_fwd = len(filter(recipes, 's:is_input_matched(v:val, input, self.opt, 0)'))
 
     " check complete match
-    let n_comp = len(filter(copy(recipes), 's:is_input_matched(v:val, input, 1)'))
+    let n_comp = len(filter(copy(recipes), 's:is_input_matched(v:val, input, self.opt, 1)'))
     if n_comp
       if len(recipes) == n_comp
         break
@@ -778,14 +807,14 @@ function! s:query() dict abort  "{{{
   call clock.stop()
 
   " pick up and register a recipe
-  if filter(recipes, 's:is_input_matched(v:val, input, 1)') != []
+  if filter(recipes, 's:is_input_matched(v:val, input, self.opt, 1)') != []
     let recipe = recipes[0]
   else
     if input ==# "\<Esc>" || input ==# "\<C-c>" || input ==# ''
       let recipe = {}
     else
       let c = split(input, '\zs')[0]
-      let recipe = {'buns': [c, c]}
+      let recipe = {'buns': [c, c], 'expr': 0, 'regex': 0}
     endif
   endif
 
@@ -812,6 +841,7 @@ endfunction
 function! s:initialize() dict abort  "{{{
   let self.count = !self.state && self.count != v:count1 ? v:count1 : self.count
   let self.done  = 0
+  let s:is_syntax_on = exists('g:syntax_on') || exists('g:syntax_manual')
 
   if self.mode ==# 'x'
     let self.visualmark.head = getpos("'<")[1:2]
@@ -823,15 +853,9 @@ function! s:initialize() dict abort  "{{{
     let self.opt.stimeoutlen = self.opt.stimeoutlen < 0 ? 0 : self.opt.stimeoutlen
     let self.opt.latestjump  = s:get('latest_jump', 1)
     let self.visualmode = self.mode ==# 'x' && visualmode() ==# "\<C-v>" ? "\<C-v>" : 'v'
-    call self.opt.default.update(deepcopy(g:textobj#sandwich#options[self.kind]))
-
-    if self.recipes.integrated == []
-      call self.recipes.integrate(self.kind, self.mode, self.opt.default)
-    endif
-    let recipes = self.recipes.integrated
 
     " prepare basket
-    for recipe in recipes
+    for recipe in self.recipes.integrated
       let has_buns     = has_key(recipe, 'buns')
       let has_external = has_key(recipe, 'external')
       if has_buns || has_external
@@ -857,11 +881,8 @@ function! s:initialize() dict abort  "{{{
 
         let stuff.opt      = copy(self.opt)
         let opt            = stuff.opt
-        let opt.filter     = printf('v:key =~# ''\%%(%s\)''',
-                \ join(keys(s:default_opt[self.kind]), '\|'))
         let opt.recipe     = deepcopy(s:opt)
         let opt.integrated = deepcopy(s:opt)
-        let opt.integrate  = function('s:opt_integrate')
         call opt.recipe.update(recipe)
         call opt.integrate()
 
@@ -947,8 +968,8 @@ function! s:select() dict abort  "{{{
 
     " time out
     if clock.started && stimeoutlen > 0
-      let erapsed = clock.erapsed()
-      if erapsed > stimeoutlen
+      let elapsed = clock.elapsed()
+      if elapsed > stimeoutlen
         echo 'textobj-sandwich: Timed out.'
         break
       endif
@@ -1001,8 +1022,11 @@ function! s:select() dict abort  "{{{
     endif
 
     " For the cooperation with operator-sandwich
+    " NOTE: After visual selection by a user-defined textobject, v:operator is set as ':'
+    " NOTE: 'synchro' option is not valid for visual mode, because there is no guarantee that g:operator#sandwich#object exists.
     if elected.opt.integrated.synchro && exists('g:operator#sandwich#object')
-          \ && v:operator ==# 'g@' && &operatorfunc =~# '^operator#sandwich#\%(delete\|replace\)'
+          \ && ((elected.searchby ==# 'buns' && v:operator ==# 'g@') || (elected.searchby ==# 'external' && v:operator =~# '\%(:\|g@\)'))
+          \ && &operatorfunc =~# '^operator#sandwich#\%(delete\|replace\)'
       call self.synchronize(elected)
     endif
 
@@ -1018,12 +1042,13 @@ function! s:synchronize(elected) abort "{{{
   let recipe = {}
   if a:elected.searchby ==# 'buns'
     call extend(recipe, {'buns': a:elected.buns})
+    call extend(recipe, {'expr': 0})
   elseif a:elected.searchby ==# 'external'
     call extend(recipe, {'external': a:elected.external})
     call extend(recipe, {'excursus': [a:elected.range.count, [0] + a:elected.cursor + [0]]})
   endif
   let filter = 'v:key !=# "clear" && v:key !=# "update"'
-  call extend(recipe, filter(a:elected.opt.recipe, filter))
+  call extend(recipe, filter(a:elected.opt.recipe, filter), 'keep')
 
   " If the recipe has 'kind' key and has no 'delete', 'replace' keys, then add these items.
   if has_key(recipe, 'kind') && filter(copy(recipe.kind), 'v:val ==# "delete" || v:val ==# "replace"') == []
@@ -1108,6 +1133,10 @@ let s:textobj = {
       \     'stimeoutlen': 0,
       \     'arg'    : copy(s:opt),
       \     'default': copy(s:opt),
+      \     'recipe' : copy(s:opt),
+      \     'integrated': copy(s:opt),
+      \     'integrate' : function('s:opt_integrate'),
+      \     'filter' : '',
       \   },
       \   'done'      : 0,
       \   'clock'     : copy(s:clock),
@@ -1126,7 +1155,11 @@ function! s:has_filetype(candidate) abort "{{{
     return 1
   else
     let filetypes = split(&filetype, '\.')
-    let filter = 'v:val ==# "all" || match(filetypes, v:val) > -1'
+    if filetypes == []
+      let filter = 'v:val ==# "all" || v:val ==# ""'
+    else
+      let filter = 'v:val ==# "all" || (v:val !=# "" && match(filetypes, v:val) > -1)'
+    endif
     return filter(copy(a:candidate['filetype']), filter) != []
   endif
 endfunction
@@ -1165,10 +1198,10 @@ function! s:is_duplicated_buns(recipe, item, opt) abort  "{{{
   if has_key(a:item, 'buns')
         \ && a:recipe['buns'][0] ==# a:item['buns'][0]
         \ && a:recipe['buns'][1] ==# a:item['buns'][1]
-    let regex_r   = get(a:recipe, 'regex',   a:opt.regex)
-    let regex_i   = get(a:item,   'regex',   a:opt.regex)
-    let expr_r    = get(a:recipe, 'expr',    a:opt.expr)
-    let expr_i    = get(a:item,   'expr',    a:opt.expr)
+    let regex_r = get(a:recipe, 'regex', a:opt.regex)
+    let regex_i = get(a:item,   'regex', a:opt.regex)
+    let expr_r  = get(a:recipe, 'expr',  a:opt.expr)
+    let expr_i  = get(a:item,   'expr',  a:opt.expr)
 
     let expr_r = expr_r ? 1 : 0
     let expr_i = expr_i ? 1 : 0
@@ -1232,22 +1265,24 @@ function! s:is_matched_syntax(coord, syntaxID) abort  "{{{
   elseif a:syntaxID == []
     return 1
   else
-    return [synIDattr(synIDtrans(synID(a:coord[0], a:coord[1], 1)), 'name')]
-          \ == a:syntaxID
+    return s:get_displaysyntax(a:coord) ==? a:syntaxID[0]
   endif
 endfunction
 "}}}
-function! s:is_included_syntax(synstack, syntaxID) abort  "{{{
+function! s:is_included_syntax(coord, syntaxID) abort  "{{{
+  let synstack = map(synstack(a:coord[0], a:coord[1]),
+        \ 'synIDattr(synIDtrans(v:val), "name")')
+
   if a:syntaxID == []
     return 1
-  elseif a:synstack == []
+  elseif synstack == []
     if a:syntaxID == ['']
       return 1
     else
       return 0
     endif
   else
-    return filter(copy(a:syntaxID), 'match(a:synstack, v:val) > -1') != []
+    return filter(map(copy(a:syntaxID), '''\c'' . v:val'), 'match(synstack, v:val) > -1') != []
   endif
 endfunction
 "}}}
@@ -1265,7 +1300,7 @@ function! s:is_equal_or_ahead(coord1, coord2) abort  "{{{
   return a:coord1[0] > a:coord2[0] || (a:coord1[0] == a:coord2[0] && a:coord1[1] >= a:coord2[1])
 endfunction
 "}}}
-function! s:is_input_matched(candidate, input, flag) abort "{{{
+function! s:is_input_matched(candidate, input, opt, flag) abort "{{{
   let has_buns = has_key(a:candidate, 'buns')
   let has_ext  = has_key(a:candidate, 'external') && has_key(a:candidate, 'input')
   if !(has_buns || has_ext)
@@ -1274,13 +1309,28 @@ function! s:is_input_matched(candidate, input, flag) abort "{{{
     return 1
   endif
 
-  " If a:flag == 0, check forward match. Otherwise, check complete match.
   let candidate = deepcopy(a:candidate)
+
   if has_buns
+    call a:opt.recipe.update(candidate)
+    call a:opt.integrate()
+
+    " 'input' is necessary for 'expr' or 'regex' buns
+    if (a:opt.integrated.expr || a:opt.integrated.regex) && !has_key(candidate, 'input')
+      return 0
+    endif
+
     let inputs = get(candidate, 'input', candidate['buns'])
   elseif has_ext
+    " 'input' is necessary for 'external' textobjects assignment
+    if !has_key(candidate, 'input')
+      return 0
+    endif
+
     let inputs = a:candidate['input']
   endif
+
+  " If a:flag == 0, check forward match. Otherwise, check complete match.
   if a:flag
     return filter(inputs, 'v:val ==# a:input') != []
   else
@@ -1308,6 +1358,14 @@ function! s:set_displaycoord(disp_coord) abort "{{{
   if a:disp_coord != s:null_coord
     execute 'normal! ' . a:disp_coord[0] . 'G' . a:disp_coord[1] . '|'
   endif
+endfunction
+"}}}
+function! s:get_displaysyntax(coord) abort  "{{{
+  return synIDattr(synIDtrans(synID(a:coord[0], a:coord[1], 1)), 'name')
+endfunction
+"}}}
+function! s:c2p(coord) abort  "{{{
+  return [0] + a:coord + [0]
 endfunction
 "}}}
 " function! s:sort(list, func, count) abort  "{{{
@@ -1339,6 +1397,14 @@ else
   endfunction
 endif
 "}}}
+function! s:eval(expr, ...) abort "{{{
+  if type(a:expr) == s:type_fref
+    return call(a:expr, a:000)
+  else
+    return eval(a:expr)
+  endif
+endfunction
+"}}}
 
 " recipe  "{{{
 function! textobj#sandwich#get_recipes() abort  "{{{
@@ -1359,30 +1425,38 @@ lockvar! g:textobj#sandwich#default_recipes
 " options "{{{
 let s:default_opt = {}
 let s:default_opt.auto = {
-      \   'expr'         : 0,
-      \   'regex'        : 0,
-      \   'skip_regex'   : [],
-      \   'quoteescape'  : 0,
-      \   'expand_range' : -1,
-      \   'nesting'      : 0,
-      \   'synchro'      : 0,
-      \   'noremap'      : 1,
-      \   'syntax'       : [],
-      \   'match_syntax' : 0,
-      \   'skip_break'   : 0,
+      \   'expr'           : 0,
+      \   'regex'          : 0,
+      \   'skip_regex'     : [],
+      \   'skip_regex_head': [],
+      \   'skip_regex_tail': [],
+      \   'quoteescape'    : 0,
+      \   'expand_range'   : -1,
+      \   'nesting'        : 0,
+      \   'synchro'        : 0,
+      \   'noremap'        : 1,
+      \   'syntax'         : [],
+      \   'inner_syntax'   : [],
+      \   'match_syntax'   : 0,
+      \   'skip_break'     : 0,
+      \   'skip_expr'      : [],
       \ }
 let s:default_opt.query = {
-      \   'expr'         : 0,
-      \   'regex'        : 0,
-      \   'skip_regex'   : [],
-      \   'quoteescape'  : 0,
-      \   'expand_range' : -1,
-      \   'nesting'      : 0,
-      \   'synchro'      : 0,
-      \   'noremap'      : 1,
-      \   'syntax'       : [],
-      \   'match_syntax' : 0,
-      \   'skip_break'   : 0,
+      \   'expr'           : 0,
+      \   'regex'          : 0,
+      \   'skip_regex'     : [],
+      \   'skip_regex_head': [],
+      \   'skip_regex_tail': [],
+      \   'quoteescape'    : 0,
+      \   'expand_range'   : -1,
+      \   'nesting'        : 0,
+      \   'synchro'        : 0,
+      \   'noremap'        : 1,
+      \   'syntax'         : [],
+      \   'inner_syntax'   : [],
+      \   'match_syntax'   : 0,
+      \   'skip_break'     : 0,
+      \   'skip_expr'      : [],
       \ }
 function! s:initialize_options(...) abort  "{{{
   let manner = a:0 ? a:1 : 'keep'

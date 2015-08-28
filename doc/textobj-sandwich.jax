@@ -1,4 +1,4 @@
-*textobj-sandwich.jax*	日本語ヘルプ	Last change:28-Jul-2015.
+*textobj-sandwich.jax*	日本語ヘルプ	Last change:26-Aug-2015.
 
 “挟まれた”テキストを検索し選択するためのテキストオブジェクトです。
 
@@ -31,13 +31,17 @@ CONFIGURATION			|textobj-sandwich-configuration|
     expand_range
     regex
     skip_regex
+    skip_regex_head
+    skip_regex_tail
     quoteescape
     expr
     synchro
     noremap
     syntax
+    inner_syntax
     match_syntax
-    skip_breaking
+    skip_break
+    skip_expr
   GLOBAL OPTIONS
     timeoutlen			|g:textobj#sandwich#timeoutlen|
     stimeoutlen			|g:textobj#sandwich#stimeoutlen|
@@ -587,13 +591,17 @@ g:textobj#sandwich#options		*g:textobj#sandwich#options*
 	    - expand_range
 	    - regex
 	    - skip_regex
+	    - skip_regex_head
+	    - skip_regex_tail
 	    - quoteescape
 	    - expr
 	    - synchro
 	    - noremap
 	    - syntax
+	    - inner_syntax
 	    - match_syntax
 	    - skip_break
+	    - skip_expr
 
 
 
@@ -665,6 +673,8 @@ regex
 
 
 skip_regex
+skip_regex_head
+skip_regex_tail
 	選択範囲候補を検索の際に、候補をスキップするための正規表現を収めた
 	|list| です。"buns" にマッチしたとしても同時にこのリストのどれかにも同
 	時にマッチした場合、この候補はスキップされます。正規表現は "buns" に
@@ -676,28 +686,37 @@ skip_regex
 	" Press dib
 	" baaaaaaaar   --->   bar
 <
-	例えば vimscript では、シングルクオーテーションに囲まれた領域内の連続
-	した二つのシングルクオーテーションは一つのシングルクオーテーションとみ
-	なされます。
+	"skip_regex" の要素は前方と後方の、両方の囲みの検索で使われます。通常
+	はこれで十分に便利なのですが、両方の囲みとエスケープ文字がすべて同一の
+	場合などに問題になります。例えば Vim script では、シングルクオーテーシ
+	ョンに囲まれた領域内の連続した二つのシングルクオーテーションは一つのシ
+	ングルクオーテーションとみなされます。
 >
 	:echo 'foo''bar'		" -> foo'bar
 <
-	これをスキップするのにこのオプションが使えます。
+	これをスキップするためには前方の検索か、後方の検索かを区別しなければな
+	りません。なので、 "skip_regex_head" 及び "skip_regex_tail" を使いまし
+	ょう。
 >
 	let g:sandwich#recipes += [
 	  \   {
 	  \     'buns': ["'", "'"],
 	  \     'filetype': ['vim'],
 	  \     'expand_range': 0,
-	  \     'skip_regex':
-	  \       [
-	  \         "[^']\\%(''\\)*\\%#\\zs''",
-	  \         "[^']\\%(''\\)*'\\%#\\zs'",
-	  \       ],
-	  \     'quoteescape': 1,
+	  \     'skip_regex_head':
+	  \       ['\%(\%#\zs''\|''\%#\zs\)''\%(''''\)*[^'']'],
+	  \     'skip_regex_tail':
+	  \       ['[^'']\%(''''\)*\%(\%#\zs''\|''\%#\zs\)'''],
+	  \     'nesting': 0
 	  \     'match_syntax': 2,
 	  \   }
 	  \ ]
+<
+	NOTE: 残念ながら、カーソルが両端の連続するシングルクオーテーションの上
+	      にある場合はこの設定でもうまく働きません。
+>
+			###          ###   : Cursor should not be on
+			'''foo '' bar'''   : the positions pointed by #.
 <
 	検索の間、内部的にカーソルを動かしているので、カーソルを表す正規表現の
 	|\%#| が使えます。
@@ -729,6 +748,9 @@ expr
 	  \   {'buns': ['@@', '@@'], 'expr': 1, 'input': ['@']}
 	  \ ]
 <
+	NOTE: このオプションが真の時、 "buns" はレシピを呼ぶためのキー入力とは
+	      みなされませんので "input" の指定が必要になります。
+
 	NOTE: もし式が |getchar()| や |input()| でユーザーに入力を求める場合、
 	      |operator-sandwich| の囲みを外すオペレータや |textobj-sandwich|
 	      の |<Plug>(textobj-sandwich-auto-i)| や
@@ -736,22 +758,35 @@ expr
 	      この問題を避けるために、 "kind" フィルター及び "synchro" オプシ
 	      ョンを併用することが推奨されます。例えば次のレシピは二文字の入力
 	      を求め、その二文字に囲まれたテキストを選択します。
->
-	let g:textobj#sandwich#recipes += [
-	  \    {
-	  \      'buns': ['GetChar()', 'GetChar()'],
-	  \      'kind': ['query'],
-	  \      'expr': 1,
-	  \      'synchro': 1,
-	  \      'input': ['f']
-	  \    },
-	  \ ]
 
-	function! GetChar() abort
-	  let c = getchar()
-	  return type(c) == type(0) ? nr2char(c) : c
-	endfunction
+	NOTE: 評価の結果 "buns" が空文字列を含むと |textobj-sandwich| は選択を
+	      中止します。
+>
+	      let g:textobj#sandwich#recipes += [
+	        \    {
+	        \      'buns': ['GetChar()', 'GetChar()'],
+	        \      'kind': ['query'],
+	        \      'expr': 1,
+	        \      'synchro': 1,
+	        \      'input': ['f']
+	        \    },
+	        \ ]
+
+	      function! GetChar() abort
+	        let c = getchar()
+	        let c = type(c) == type(0) ? nr2char(c) : c
+	        return c ==# "\<Esc>" || c ==# "\<C-c>" ? '' : c
+	      endfunction
 <
+	評価される buns が |Funcref| の場合、その関数は最低一つの引数を取れな
+	ければなりません。
+>
+	:function {func}(is_head, ...)
+<
+	a:is_head は前方の囲みを評価中に1、後方の囲みを評価中に0になります。将
+	来、引数が追加されることがありうるので、可変長引数を指定しておくことを
+	お勧めします。
+
 	デフォルト値
 	  * query: 0
 	  * auto : 0
@@ -797,13 +832,110 @@ syntax
 	テキストの囲みに適用されていることを期待するシンタックスグループ名のリ
 	ストです。このリストが空でなければ、テキストオブジェクトは選択範囲の候
 	補検索時にシンタックスを確認し、リスト要素にマッチするものがなければス
-	キップします。例えば '' や "" は一般的に String ハイライトグループが適
-	用されているでしょう。
+	キップします。構文ハイライトがオフになっていれば単に無視されます。
+>
+	" check the position pointed by #
+	"           #   #
+	"           "foo"
+<
+	例えば "" は一般的にいくつかの限られたハイライトグループが適用されてい
+	ることが期待できます。
 >
 	let g:sandwich#recipes += [
-	  \   {'buns': ['"', '"'], 'quoteescape': 1, 'syntax': ['String']}
+	  \   {
+	  \     'buns': ['"', '"'],
+	  \     'quoteescape': 1,
+	  \     'expand_range': 0,
+	  \     'nesting': 0,
+	  \     'match_syntax': 1,
+	  \     'syntax':
+	  \       ['Constant', 'Statement', 'Special', 'String', 'Comment'],
+	  \     'inner_syntax':
+	  \       ['Constant', 'PreProc', 'Special', 'String', 'Comment'],
+	  \   }
 	  \ ]
 <
+	このレシピは次のような場合も文字列としての "" に囲まれた領域をよく認識
+	します。
+>
+	key press vas" selects as following. # means cursor positions.
+
+	        <-#->
+	list = ["foo", "bar"]
+	       <------#----->
+<
+	しかし残念ながらこのレシピは汎用的とはいえずマークダウンのようなファイ
+	ルタイプでうまく働きません。なので可能ならば使用するファイルタイプごと
+	に設定するのが望ましいでしょう。
+>
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ['"', '"'],
+	  \     'filetype': ['ruby'],
+	  \     'quoteescape': 1,
+	  \     'expand_range': 0,
+	  \     'nesting': 0,
+	  \     'match_syntax': 1,
+	  \     'syntax':
+	  \       ['Constant', 'Special', 'String', 'Comment'],
+	  \     'inner_syntax':
+	  \       ['Constant', 'Special', 'String', 'Comment'],
+	  \   }
+	  \ ]
+
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ['"', '"'],
+	  \     'filetype': ['sh'],
+	  \     'quoteescape': 1,
+	  \     'expand_range': 0,
+	  \     'nesting': 0,
+	  \     'match_syntax': 1,
+	  \     'syntax':
+	  \       ['Constant', 'Statement', 'String', 'Comment'],
+	  \     'inner_syntax':
+	  \       ['Constant', 'Special', 'PreProc', 'String', 'Comment'],
+	  \   }
+	  \ ]
+<
+	よく使われるハイライトグループは多くのカラースキーマで共有されていま
+	す。こちらをご覧ください。 |group-name|
+
+	NOTE: リストの要素がシンタックススタックの中に含まれていれば成功とみな
+	      されます。シンタックススタックは次のようなキーマッピングを対象文
+	      字列の上で使用することにより確認できます。
+>
+	nnoremap <Leader>s :echo map(synstack(line('.'), col('.')),
+	                        \ 'synIDattr(synIDtrans(v:val), "name")')<CR>
+<
+	デフォルト値
+	  * query: []
+	  * auto : []
+
+
+
+inner_syntax
+	囲まれたテキストの両端に適用されていることを期待するシンタックスグルー
+	プ名のリストです。このリストが空でなければ、テキストオブジェクトは選択
+	範囲の候補検索時にシンタックスを確認し、リスト要素にマッチするものがな
+	ければスキップします。構文ハイライトがオフになっていれば単に無視されま
+	す。
+>
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ['"', '"'],
+	  \     'quoteescape': 1,
+	  \     'inner_syntax': ['Constant', 'String']
+	  \   }
+	  \ ]
+
+	" check the position pointed by #
+	"            # #
+	"           "foo"
+<
+	一つ上の local option "syntax" の項に実用的な使用例があります。こちら
+	もご覧ください。
+
 	よく使われるハイライトグループは多くのカラースキーマで共有されていま
 	す。こちらをご覧ください。 |group-name|
 
@@ -824,19 +956,35 @@ match_syntax
 	もしこのオプションが 1 のとき、テキストオブジェクトは文字列両端の囲み
 	のシンタックスハイライトが一致していることを確認します。一致しなければ
 	その候補はスキップされるでしょう。さらにこのオプションが 2 の時には、
-	これに加えて囲まれたテキストの両端も同じくハイライトが一致していること
-	を確かめます。例えば "" は一般的にそれ自体を含み、内部の文字列も
-	Stringシンタックスが適用されているでしょう。囲み文字が一文字でない場合
-	はそれぞれの先頭位置が確認されます。
+	これに加えて囲まれたテキストの両端も同じハイライトが適用されているかを
+	確かめます。このオプションが 3 の場合は、 2 の場合とほとんど同じですが
+	囲みと囲まれたテキストをそれぞれ独立に調べます。すなわち、両方の囲みの
+	ハイライトが同じ且つ囲まれた文字列の両端のハイライトが同じ必要がありま
+	すが、囲みと内側の文字列のハイライトが一致する必要はありません。
+>
+			AB CD
+			(foo)
+
+	match_syntax is 1: A == D is required.
+	match_syntax is 2: A == D == B == C is required.
+	match_syntax is 3: A == D and B == C is required.
+<
+	囲み文字が一文字でない場合はそれぞれの先頭位置が確認されます。
+
+	例えば '' は一般的にそれ自体を含み、内部の文字列もConstant か String
+	シンタックスが適用されているでしょう。
 >
 	let g:sandwich#recipes += [
 	  \   {
-	  \     'buns': ['"', '"'],
+	  \     'buns': ["'", "'"],
 	  \     'quoteescape' : 1,
-	  \     'syntax'      : ['String']}
-	  \     'match_syntax': 2
+	  \     'syntax'      : ['Constant', 'String'],
+	  \     'match_syntax': 2,
+	  \   }
 	  \ ]
 <
+	Local option "syntax" の項にも使用例がありますのでご覧ください。
+
 	NOTE: 適用されたシンタックスアイテムは次のようなキーマッピングを対象文
 	      字列の上で使用することで調べられます。
 >
@@ -888,6 +1036,55 @@ skip_break
 	デフォルト値
 	  * query: 0
 	  * auto : 0
+
+
+
+skip_expr
+	式 |expression| のリストを値にとります。選択範囲を検索する際、 buns に
+	マッチする箇所を見つけるたびに式が評価され、もし返り値が真 (非ゼロ値)
+	ならそのマッチ箇所をスキップします。
+>
+	" skip 'a's other than head and tail of a line.
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ['a', 'a'],
+	  \     'skip_expr': [
+	  \       'getpos(".")[2] != 1 && getpos(".")[2] != col([getpos(".")[1], "$"])-1'
+	  \     ]
+	  \   }
+	  \ ]
+	" Press dib
+	" aaaaa   --->   aa
+<
+	もし、リストの要素が |Funcref| の場合は注意が必要です。その関数は二つ
+	の引数をとれるようにする必要があります。
+>
+	:function {func}(is_head, pos)
+<
+	もし、 a:is_head が1なら前方の囲みを検索中です。もし、 a:is_head が0な
+	ら後方の囲みを検索中になります。 a:pos は buns にマッチした先頭位置を
+	表す四要素のリストです。これは |getpos()| 関数とおなじフォーマットを持
+	ちます。必ずしもこれらの引数を使う必要はありません。将来、引数が追加さ
+	れることがありうるので、可変長引数を指定しておくことをお勧めします。
+>
+	" skip 'a's other than head and tail of a line.
+	function! SkipIntermediates(is_head, pos, ...)
+	  if a:is_head
+	    return a:pos[2] != 1
+	  else
+	    return a:pos[2] != col([a:pos[1], '$'])-1
+	  endif
+	endfunction
+
+	let g:sandwich#recipes += [
+	  \   {
+	  \     'buns': ['a', 'a'],
+	  \     'skip_expr': [function('SkipIntermediates')]
+	  \   }
+	  \ ]
+	" Press dib
+	" aaaaa   --->   aa
+<
 
 
 

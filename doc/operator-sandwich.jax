@@ -1,4 +1,4 @@
-*operator-sandwich.jax*	日本語ヘルプ	Last change:25-Jul-2015.
+*operator-sandwich.jax*	日本語ヘルプ	Last change:28-Aug-2015.
 
 “挟まれた”テキストを編集するためのオペレータです。
 
@@ -862,8 +862,7 @@ highlight
 
 
 skip_space
-	値が 1 なら、指定された文字列の両端がスペースであった場合にこれらをス
-	キップします。
+	値が 1 なら、指定された文字列の両端のスペースをスキップします。
 >
 	let g:sandwich#recipes += [
 	  \   {'buns': ['(', ')'], 'skip_space': 0}
@@ -993,6 +992,9 @@ linewise
 <
 	囲みを置換するオペレータの場合はこれらの組み合わせの動作になります。
 
+	NOTE: コマンドラインウィンドウ |cmdline-window| 内では無視され、0が指
+	      定されているかのように振舞います。
+
 	デフォルト値
 	  * add
 	    - char : 0
@@ -1073,6 +1075,9 @@ expr
 	  \   {'buns': ['@@', '@@'], 'expr': 1, 'synchro': 1, 'input': ['@']}
 	  \ ]
 <
+	NOTE: このオプションが真の時、 "buns" はレシピを呼ぶためのキー入力とは
+	      みなされませんので、 "input" の指定が必要になります。
+
 	NOTE: もし式が |getchar()| や |input()| でユーザーに入力を求める場合、
 	      |operator-sandwich| の囲みを外すオペレータや |textobj-sandwich|
 	      の |<Plug>(textobj-sandwich-auto-i)| や
@@ -1080,28 +1085,46 @@ expr
 	      この問題を避けるために、 "kind" フィルター及び "action" フィルタ
 	      ーを併用することが推奨されます。例えば次のレシピは html スタイル
 	      のタグで囲むことを目的として、タグ名の入力をユーザーに求めます。
->
-	let g:operator#sandwich#recipes += [
-	  \   {
-	  \     'buns'    : ['TagInput(1)', 'TagInput(0)'],
-	  \     'expr'    : 1,
-	  \     'filetype': ['html'],
-	  \     'kind'    : ['add', 'replace'],
-	  \     'action'  : ['add'],
-	  \     'input'   : ['t'],
-	  \   },
-	  \ ]
 
-	function! TagInput(is_head) abort
-	  if a:is_head
-	    let s:TagLast = input('Tag: ')
-	    let tag = printf('<%s>', s:TagLast)
-	  else
-	    let tag = printf('</%s>', matchstr(s:TagLast, '^\a[^[:blank:]>/]*'))
-	  endif
-	  return tag
-	endfunction
+	NOTE: |textobj-sandwich| と違い |operator-sandwich| は "buns" に空文字
+	      列を許容します。もし中止したい場合は例外
+	      'OperatorSandwichCancel' を |:throw| してください。
+>
+	      let g:operator#sandwich#recipes += [
+	        \   {
+	        \     'buns'    : ['TagInput(1)', 'TagInput(0)'],
+	        \     'expr'    : 1,
+	        \     'filetype': ['html'],
+	        \     'kind'    : ['add', 'replace'],
+	        \     'action'  : ['add'],
+	        \     'input'   : ['t'],
+	        \   },
+	        \ ]
+
+	      function! TagInput(is_head) abort
+	        if a:is_head
+	          let s:TagLast = input('Tag: ')
+	          if s:TagLast !=# ''
+	            let tag = printf('<%s>', s:TagLast)
+	          else
+	            throw 'OperatorSandwichCancel'
+	          endif
+	        else
+	          let tag = printf('</%s>',
+	                      \ matchstr(s:TagLast, '^\a[^[:blank:]>/]*'))
+	        endif
+	        return tag
+	      endfunction
 <
+	評価される buns が |Funcref| の場合、その関数は最低一つの引数を取れな
+	ければなりません。
+>
+	:function {func}(is_head, ...)
+<
+	a:is_head は前方の囲みを評価中に1、後方の囲みを評価中に0になります。将
+	来、引数が追加されることがありうるので、可変長引数を指定しておくことを
+	お勧めします。
+
 	デフォルト値
 	  * add
 	    - char : 0
