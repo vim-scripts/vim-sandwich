@@ -6,7 +6,7 @@
 
 """ NOTE: Whole design (-: string or number, *: functions, []: list, {}: dictionary) "{{{
 " operator object
-"   - state                  : 0 or 1 or -1. If it is called by keymapping, it is 1. If it is called by dot command, it is 0. -1 is used in order to deactivate the operaor object when the assigned region is not valid.
+"   - state                  : 0 or 1 or -1. If it is called by keymapping, it is 1. If it is called by dot command, it is 0. -1 is used in order to deactivate the operator object when the assigned region is not valid.
 "   - count                  : Positive integer. The assigned {count}
 "   - num                    : The number of processed regions in one count. It could be more than 1 only in block wise visual mode.
 "   - mode                   : 'n' or 'x'. Which mode the keymapping is called.
@@ -20,9 +20,14 @@
 "     []integrated           : The recipes which are the integrated result of all recipes. This is the one used practically.
 "     * integrate            : The function to set operator.recipes.integrated.
 "   {}cursor                 : [Linked from stuff.cursor] The infomation to set the final position of the cursor
+"     []head                 : The head of the inserted head-surrounding.
 "     []inner_head           : The left upper edge of the assigned region. It is used in default
 "     []keep                 : The original position of the cursor. This is not valid when it started by dot command.
 "     []inner_tail           : The right bottom edge of the assigned region.
+"     []tail                 : The tail of the inserted tail-surrounding.
+"   {}appearance             : For some tweaks of appearance.
+"     - cursor               : The information of the shape of cursor. This is used to hide cursor in action temporary, after an action it should be restored.
+"     - cursorline           : In case of the add and replace operators are called in visual mode, hide cursorline highlight temporaly, after an action it should be restored.
 "   {}modmark                : [Linked from stuff.modmark] The positions of both edges of the modified region.
 "   {}opt
 "     {}arg                  : [Linked from stuff.opt.arg] The options given through the 3rd argument of operator#sandwich#prerequisite(). This has higher priority than default.
@@ -149,7 +154,7 @@ function! operator#sandwich#prerequisite(kind, mode, ...) abort "{{{
   " prerequisite
   let operator       = g:operator#sandwich#object
   let operator.state = 1
-  let operator.count = v:prevcount == 0 ? 1 : v:prevcount
+  let operator.count = a:mode == 'x' ? (v:prevcount == 0 ? 1 : v:prevcount) : v:count1
   let operator.mode  = a:mode
   let operator.view  = winsaveview()
   let operator.cursor.keep[0:3] = getpos('.')[0:3]
@@ -164,7 +169,6 @@ function! operator#sandwich#prerequisite(kind, mode, ...) abort "{{{
     normal! gv
     let is_extended = winsaveview().curswant == 1/0
     silent normal! ""y
-    execute "normal! \<Esc>"
     let regtype = getregtype('"')
     call setreg('"', reg[0], reg[1])
 
@@ -232,7 +236,6 @@ function! operator#sandwich#query1st(kind, mode, ...) abort "{{{
   endif
 
   " prerequisite
-  " NOTE: force to set highlight=0
   let arg_opt = get(a:000, 0, {})
   let arg_recipes = get(a:000, 1, [])
   call operator#sandwich#prerequisite(a:kind, a:mode, arg_opt, arg_recipes)
@@ -240,7 +243,10 @@ function! operator#sandwich#query1st(kind, mode, ...) abort "{{{
   let operator.num = 1
   let operator.opt.timeoutlen = s:get('timeoutlen', &timeoutlen)
   let operator.opt.timeoutlen = operator.opt.timeoutlen < 0 ? 0 : operator.opt.timeoutlen
-  call operator.opt.default.update({'highlight': 0, 'query_once': 1})
+  let operator.opt.filter     = s:default_opt[a:kind]['filter']
+  let operator.opt.integrate  = function('s:opt_integrate')
+  " NOTE: force to set highlight=0 and query_once=1
+  call operator.opt.default.update({'highlight': 0, 'query_once': 1, 'expr': 0})
 
   " build stuff
   let stuff = deepcopy(s:stuff)
@@ -253,13 +259,9 @@ function! operator#sandwich#query1st(kind, mode, ...) abort "{{{
   for stuff in operator.basket
     let stuff.cursor         = operator.cursor
     let stuff.modmark        = operator.modmark
-    " NOTE: stuff.opt.filter is actually does not depend on the motionwise.
     let stuff.opt            = copy(operator.opt)
-    let stuff.opt.filter     = printf('v:key =~# ''\%%(%s\)''',
-          \ join(keys(s:default_opt[a:kind]['char']), '\|'))
     let stuff.opt.recipe     = deepcopy(s:opt)
     let stuff.opt.integrated = deepcopy(s:opt)
-    let stuff.opt.integrate  = function('s:opt_integrate')
     call stuff.opt.integrate()
     for act in stuff.acts
       let act.cursor  = stuff.cursor
@@ -284,7 +286,7 @@ function! operator#sandwich#query1st(kind, mode, ...) abort "{{{
         let _stuff = operator.basket[_i]
         call extend(_stuff.buns, stuff.buns, 'force')
         call _stuff.opt.recipe.update(stuff.opt.recipe)
-        call _stuff.opt.integrated()
+        call _stuff.opt.integrate()
       endfor
       break
     endif
@@ -292,12 +294,10 @@ function! operator#sandwich#query1st(kind, mode, ...) abort "{{{
 
   if filter(copy(operator.basket), 'has_key(v:val, "buns")') != []
     let operator.state = 0
-    let &l:operatorfunc = 'operator#sandwich#' . a:kind
-    let cmd = 'g@'
-    if a:mode ==# 'x'
-      let cmd = 'gv' . cmd
-    endif
+    let cmd = a:mode ==# 'x' ? 'gvg@' : 'g@'
     call feedkeys(cmd, 'n')
+  else
+    unlet g:operator#sandwich#object
   endif
   return
 endfunction
@@ -320,6 +320,13 @@ function! operator#sandwich#release_count() abort  "{{{
   else
     return ''
   endif
+endfunction
+"}}}
+function! operator#sandwich#squash_count() abort  "{{{
+  if exists('g:operator#sandwich#object')
+    let g:operator#sandwich#object.count = 1
+  endif
+  return ''
 endfunction
 "}}}
 function! operator#sandwich#predot() abort  "{{{
@@ -436,9 +443,11 @@ function! s:add_once(buns, undojoin, done, next_act) dict abort "{{{
 
   if s:is_valid_4pos(target)
         \ && s:is_equal_or_ahead(target.head2, target.head1)
-    let target.head2[0:3] = s:get_right_pos(target.head2)
-    call self.set_indent()
+    if target.head2[2] != col([target.head2[1], '$'])
+      let target.head2[0:3] = s:get_right_pos(target.head2)
+    endif
 
+    call self.set_indent()
     try
       call setpos('.', target.head2)
       if s:is_in_cmdline_window
@@ -1127,12 +1136,26 @@ function! s:initialize(kind, motionwise) dict abort "{{{
     " deactivate
     let self.state = -1
   else
+    """ tweak appearance
     " hide_cursor
     if s:has_gui_running
-      let self.cursor_info = &guicursor
-      set guicursor+=o:block-NONE
+      let self.appearance.cursor = &guicursor
+      set guicursor+=n-o:block-NONE
     else
-      let self.cursor_info = &t_ve
+      let self.appearance.cursor = &t_ve
+      set t_ve=
+    endif
+
+    " hide cursorline highlight if in visualmode.
+    " FIXME: The cursorline would be shown at the top line of assigned region
+    "        in a moment currently. This is not good. This could be avoidable
+    "        if the tweak was done in operator#sandwich#prerequisite().
+    "        However, since operatorfunc is possible not to be called (when
+    "        motion or textobj is canceled), it cannot be restored safely...
+    "        Another way to avoid is to set lazyredraw on constantly.
+    if (a:kind ==# 'add' || a:kind ==# 'replace') && self.mode ==# 'x'
+      let self.appearance.cursorline = &l:cursorline
+      setlocal nocursorline
     endif
   endif
 
@@ -1141,7 +1164,7 @@ function! s:initialize(kind, motionwise) dict abort "{{{
   let self.opt.timeoutlen = self.opt.timeoutlen < 0 ? 0 : self.opt.timeoutlen
   let self.opt.duration = s:get('highlight_duration', 200)
   let self.opt.duration = self.opt.duration < 0 ? 0 : self.opt.duration
-  let self.opt.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt[a:kind][a:motionwise]), '\|'))
+  let self.opt.filter = s:default_opt[a:kind]['filter']
   let self.opt.integrate  = function('s:opt_integrate')
   let self.cursor.inner_head = region.head
   let self.cursor.inner_tail = region.tail
@@ -1303,11 +1326,14 @@ function! s:add() dict abort "{{{
       let [undojoin, stuff.done]
             \ = act.add_once(buns, undojoin, stuff.done, next_act)
     endfor
+    let self.cursor.head = copy(self.modmark.head)
+    let self.cursor.tail = s:get_left_pos(self.modmark.tail)
     let undojoin = self.state ? 1 : 0
 
     if stuff.done && opt.command != []
       call stuff.command()
     endif
+
   endfor
 endfunction
 "}}}
@@ -1336,6 +1362,8 @@ function! s:delete() dict abort  "{{{
       let next_act = next_stuff.acts[j]
       let stuff.done = act.delete_once(stuff.done, next_act)
     endfor
+    let self.cursor.head = copy(self.modmark.head)
+    let self.cursor.tail = s:get_left_pos(self.modmark.tail)
 
     if stuff.done && stuff.opt.integrated.command != []
       call stuff.command()
@@ -1387,6 +1415,8 @@ function! s:replace() dict abort  "{{{
       let [undojoin, stuff.done]
             \ = act.replace_once(buns, undojoin, stuff.done, next_act)
     endfor
+    let self.cursor.head = copy(self.modmark.head)
+    let self.cursor.tail = s:get_left_pos(self.modmark.tail)
     let undojoin = self.state ? 1 : 0
 
     if stuff.done && opt.command != []
@@ -1425,18 +1455,14 @@ function! s:finalize() dict abort  "{{{
       endfor
 
       if self.state || self.keepable
-        let cursor = cursor_opt =~# '^\%(keep\|inner_\%(head\|tail\)\)$' ? self.cursor[cursor_opt]
-                \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
-                \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
-                \ : self.cursor['inner_head']
+        let cursor = cursor_opt =~# '^\%(keep\|\%(inner_\)\?\%(head\|tail\)\)$' && self.cursor[cursor_opt] != s:null_pos
+                   \ ? self.cursor[cursor_opt] : self.cursor['inner_head']
         let self.keepable = 0
       else
         " In the case of dot repeat, it is impossible to keep original position
         " unless self.keepable == 1.
-        let cursor = cursor_opt =~# '^inner_\%(head\|tail\)$' ? self.cursor[cursor_opt]
-                \ : cursor_opt ==# 'head' && modmark.head != s:null_pos ? modmark.head
-                \ : cursor_opt ==# 'tail' && modmark.tail != s:null_pos ? s:get_left_pos(modmark.tail)
-                \ : self.cursor['inner_head']
+        let cursor = cursor_opt =~# '^\%(inner_\)\?\%(head\|tail\)$' && self.cursor[cursor_opt] != s:null_pos
+                   \ ? self.cursor[cursor_opt] : self.cursor['inner_head']
       endif
 
       if s:has_patch_7_4_310
@@ -1447,14 +1473,16 @@ function! s:finalize() dict abort  "{{{
       endif
     endif
 
-    " restore cursor
-    if has_key(self, 'cursor_info')
-      if s:has_gui_running
-        set guicursor&
-        let &guicursor = self.cursor_info
-      else
-        let &t_ve = self.cursor_info
-      endif
+    " restore appearance
+    if s:has_gui_running
+      set guicursor&
+      let &guicursor = self.appearance.cursor
+    else
+      let &t_ve = self.appearance.cursor
+    endif
+
+    if self.mode ==# 'x'
+      let &l:cursorline = self.appearance.cursorline
     endif
   endif
 
@@ -1501,6 +1529,10 @@ let s:operator = {
       \     'keep'      : copy(s:null_pos),
       \     'inner_tail': copy(s:null_pos),
       \     'tail'      : copy(s:null_pos),
+      \   },
+      \   'appearance': {
+      \     'cursor': '',
+      \     'cursorline': &cursorline,
       \   },
       \   'modmark': copy(s:null_2pos),
       \   'opt': {
@@ -1641,6 +1673,11 @@ endfunction
 function! s:get_assigned_region(kind, motionwise) abort "{{{
   let region = {'head': getpos("'["), 'tail': getpos("']")}
 
+  " early-quit conditions
+  if !s:is_valid_region(a:kind, region, a:motionwise)
+    return deepcopy(s:null_2pos)
+  endif
+
   if a:motionwise ==# 'line'
     let region.head[2] = 1
     let region.tail[2] = col([region.tail[1], '$']) - 1
@@ -1649,23 +1686,36 @@ function! s:get_assigned_region(kind, motionwise) abort "{{{
       let region.tail[2] -= 1
     endif
   endif
+  if region.tail[2] < 1
+    let region.tail[2] = 1
+  endif
 
   " for multibyte characters
-  if region.tail != s:null_pos && region.tail[3] == 0
+  if region.tail[2] != col([region.tail[1], '$']) && region.tail[3] == 0
+    let cursor = getpos('.')
     call setpos('.', region.tail)
     call search('.', 'bc')
     let region.tail = getpos('.')
+    call setpos('.', cursor)
   endif
 
-  " check validity
-  if a:kind ==# 'add'
-    let region = region.head == s:null_pos || region.tail == s:null_pos || !s:is_equal_or_ahead(region.tail, region.head)
-          \ ? deepcopy(s:null_2pos) : region
-  else
-    let region = region.head == s:null_pos || region.tail == s:null_pos || !s:is_ahead(region.tail, region.head)
-          \ ? deepcopy(s:null_2pos) : region
+  " check validity again
+  if !s:is_valid_region(a:kind, region)
+    return deepcopy(s:null_2pos)
   endif
+
   return region
+endfunction
+"}}}
+function! s:is_valid_region(kind, region, ...) abort "{{{
+  " If the third argument is given and it is 'line', ignore the geometric
+  " condition of head and tail.
+  return s:is_valid_2pos(a:region)
+    \ && (
+    \       (a:kind ==# 'add' && s:is_equal_or_ahead(a:region.tail, a:region.head))
+    \    || ((a:kind ==# 'delete' || a:kind ==# 'replace') && s:is_ahead(a:region.tail, a:region.head))
+    \    || (a:0 > 0 && a:1 ==# 'line')
+    \    )
 endfunction
 "}}}
 function! s:get_wider_region(head_edge, tail_edge) abort "{{{
@@ -1767,7 +1817,12 @@ endfunction
 "}}}
 function! s:skip_space(pos, flag, stopline) abort  "{{{
   call setpos('.', a:pos)
-  let dest = s:c2p(searchpos('\S', a:flag, a:stopline))
+  if a:pos[2] == col([a:pos[1], '$'])
+    " if the cursor is on a line breaking, it should not be skipped.
+    let dest = a:pos
+  else
+    let dest = s:c2p(searchpos('\_S', a:flag, a:stopline))
+  endif
   let validity = 0
   if dest != s:null_pos
     if stridx(a:flag, 'b') > -1
@@ -2375,6 +2430,7 @@ lockvar! g:operator#sandwich#default_recipes
 
 " options "{{{
 let s:default_opt = {}
+
 let s:default_opt.add = {}
 let s:default_opt.add.char = {
       \   'cursor'     : 'inner_head',
@@ -2418,6 +2474,8 @@ let s:default_opt.add.block = {
       \   'indentkeys+': '',
       \   'indentkeys-': '',
       \ }
+let s:default_opt.add.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt['add']['char']), '\|'))
+
 let s:default_opt.delete = {}
 let s:default_opt.delete.char = {
       \   'cursor'    : 'inner_head',
@@ -2449,6 +2507,8 @@ let s:default_opt.delete.block = {
       \   'command'   : [],
       \   'linewise'  : 0,
       \ }
+let s:default_opt.delete.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt['delete']['char']), '\|'))
+
 let s:default_opt.replace = {}
 let s:default_opt.replace.char = {
       \   'cursor'    : 'inner_head',
@@ -2498,6 +2558,8 @@ let s:default_opt.replace.block = {
       \   'indentkeys+': '',
       \   'indentkeys-': '',
       \ }
+let s:default_opt.replace.filter = printf('v:key =~# ''\%%(%s\)''', join(keys(s:default_opt['replace']['char']), '\|'))
+
 function! s:initialize_options(...) abort  "{{{
   let manner = a:0 ? a:1 : 'keep'
   let g:operator#sandwich#options = s:get('options', {})
