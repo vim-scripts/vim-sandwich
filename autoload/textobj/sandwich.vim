@@ -266,27 +266,26 @@ let s:clock = {
 "}}}
 
 function! s:coord_get_inner(buns, cursor, opt) dict abort "{{{
-  if a:opt.skip_break
-    let virtualedit = &virtualedit
-    let &virtualedit = ''
-  endif
-
   call cursor(self.head)
   call search(a:buns[0], 'ce', self.tail[0])
   normal! l
-  let self.inner_head = getpos('.')[1:2]
+  if a:opt.skip_break && col('.') == col([line('.'), '$'])
+    let self.inner_head = searchpos('\_S', '', self.tail[0])
+  else
+    let self.inner_head = getpos('.')[1:2]
+  endif
 
   call cursor(self.tail)
   call search(a:buns[1], 'bc', self.head[0])
-  if !a:opt.skip_break && getpos('.')[2] == 1
-    normal! hl
+  if a:opt.skip_break && (col('.') < 2 || getline(line('.'))[: col('.')-2] =~# '^\s*$')
+    let self.inner_tail = searchpos('\_S', 'be', self.head[0])
   else
-    normal! h
-  endif
-  let self.inner_tail = getpos('.')[1:2]
-
-  if a:opt.skip_break
-    let &virtualedit = virtualedit
+    if getpos('.')[2] == 1
+      normal! hl
+    else
+      normal! h
+    endif
+    let self.inner_tail = getpos('.')[1:2]
   endif
 endfunction
 "}}}
@@ -625,8 +624,13 @@ function! s:is_valid_candidate(textobj) dict abort "{{{
   else
     " self.visualmode ==# 'V' never comes.
     if self.visualmode ==# 'v'
-      let visual_mode_affair = s:is_ahead(visualmark.head, head)
-                          \ || s:is_ahead(tail, visualmark.tail)
+      if self.a_or_i ==# 'i'
+        let visual_mode_affair = s:is_ahead(visualmark.head, head)
+                            \ || s:is_ahead(tail, visualmark.tail)
+      else
+        let visual_mode_affair = (s:is_ahead(visualmark.head, head) && s:is_equal_or_ahead(tail, visualmark.tail))
+                            \ || (s:is_equal_or_ahead(visualmark.head, head) && s:is_ahead(tail, visualmark.tail))
+      endif
     else
       let orig_pos = getpos('.')
       let visual_head = s:get_displaycoord(visualmark.head)
@@ -671,7 +675,8 @@ function! s:is_valid_candidate(textobj) dict abort "{{{
     let opt_syntax_affair = 1
   endif
 
-  return s:is_equal_or_ahead(tail, head)
+  return head != s:null_coord && tail != s:null_coord
+        \ && s:is_equal_or_ahead(tail, head)
         \ && s:is_in_between(self.cursor, coord.head, coord.tail)
         \ && filter(copy(a:textobj.candidates), filter) == []
         \ && visual_mode_affair
@@ -979,13 +984,7 @@ function! s:select() dict abort  "{{{
 
   if len(self.candidates) >= self.count
     " election
-    let map_rule = printf(
-          \   'extend(v:val,
-          \     {"len": s:get_buf_length(v:val.coord.%s, v:val.coord.%s)}
-          \   )',
-          \   'inner_head',
-          \   'inner_tail'
-          \ )
+    let map_rule = 'extend(v:val, {"len": s:get_buf_length(v:val.coord.inner_head, v:val.coord.inner_tail)})'
     call map(self.candidates, map_rule)
     call s:sort(self.candidates, 's:compare_buf_length', self.count)
     let elected = self.candidates[self.count - 1]
